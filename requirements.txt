@@ -1,0 +1,25 @@
+# Core dependencies
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+
+# Web scraping
+selenium>=4.0.0
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+
+# Google Sheets API
+gspread>=6.0.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.1.1
+
+# Excel support
+openpyxl>=3.1.0
+
+# Web app (for Bolt integration)
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# Utilities
+python-dotenv>=1.0.0

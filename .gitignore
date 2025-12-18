@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Data files
+data/*.csv
+data/*.xlsx
+*.pkl
+
+# Credentials
+credentials.json
+*.pem
+*.key
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Project specific
+models/*.pkl
+*.zip
+interior-design-*/
+renewable-energy-*/
+roman-interior-*/
+Property Export Decatur+List.xlsx
+
+# Keep structure
+!data/.gitkeep
+!models/.gitkeep
