@@ -182,3 +182,49 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.now)
+
+
+class GoogleSheetsRequest(BaseModel):
+    """Request for processing properties from Google Sheets"""
+    sheet_url: str = Field(..., description="Google Sheets URL or Sheet ID")
+    sheet_name: Optional[str] = Field("Sheet1", description="Name of the sheet/tab to read")
+    start_row: int = Field(2, ge=1, description="Row to start reading data (1-indexed, default skips header)")
+    write_back: bool = Field(True, description="Write predictions back to the sheet")
+    use_ensemble: bool = Field(True, description="Use ensemble model for predictions")
+    credentials_path: Optional[str] = Field(None, description="Path to Google service account credentials JSON")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "sheet_url": "https://docs.google.com/spreadsheets/d/1ABC...XYZ/edit",
+                "sheet_name": "Sheet1",
+                "start_row": 2,
+                "write_back": True,
+                "use_ensemble": True,
+                "credentials_path": None
+            }
+        }
+
+
+class GoogleSheetsResponse(BaseModel):
+    """Response from Google Sheets processing"""
+    sheet_id: str
+    total_properties: int
+    successful_predictions: int
+    failed_predictions: int
+    predictions: List[PredictionResponse]
+    written_back: bool = False
+    timestamp: datetime = Field(default_factory=datetime.now)
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "sheet_id": "1ABC...XYZ",
+                "total_properties": 10,
+                "successful_predictions": 10,
+                "failed_predictions": 0,
+                "predictions": [],
+                "written_back": True,
+                "timestamp": "2025-01-15T10:30:00"
+            }
+        }

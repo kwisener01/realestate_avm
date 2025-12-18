@@ -17,7 +17,12 @@ google-auth-httplib2>=0.1.1
 # Excel support
 openpyxl>=3.1.0
 
-# Web app (for Bolt integration)
+# Web framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
+
+# Legacy support (Flask for Bolt integration)
 flask>=3.0.0
 flask-cors>=4.0.0
 

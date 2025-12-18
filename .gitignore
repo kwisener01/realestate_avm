@@ -39,6 +39,12 @@ renewable-energy-*/
 roman-interior-*/
 Property Export Decatur+List.xlsx
 
+# Deployment
+.env.local
+.env.production
+*.db
+*.sqlite3
+
 # Keep structure
 !data/.gitkeep
 !models/.gitkeep

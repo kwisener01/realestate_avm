@@ -4,6 +4,8 @@ FastAPI application for Property Valuation AVM
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 import os
 import sys
@@ -12,7 +14,7 @@ from datetime import datetime
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.api import routes_predict, routes_properties
+from app.api import routes_predict, routes_properties, routes_sheets
 from app.models.property_models import HealthCheck
 from ml.stacker import StackerModel
 
@@ -45,6 +47,7 @@ async def lifespan(app: FastAPI):
                 meta_model_path=os.path.join(model_dir, "meta_model.joblib")
             )
             routes_predict.set_model(stacker_model)
+            routes_sheets.set_model(stacker_model)
             print("Models loaded successfully!")
         except Exception as e:
             print(f"Warning: Could not load models: {e}")
@@ -92,11 +95,22 @@ app.add_middleware(
 # Include routers
 app.include_router(routes_predict.router)
 app.include_router(routes_properties.router)
+app.include_router(routes_sheets.router)
+
+# Mount static files
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 @app.get("/", tags=["root"])
 async def root():
-    """Root endpoint with API information"""
+    """Serve the web UI"""
+    static_file = os.path.join(os.path.dirname(__file__), "static", "index.html")
+    if os.path.exists(static_file):
+        return FileResponse(static_file)
+
+    # Fallback to API info if static file doesn't exist
     return {
         "message": "Property Valuation AVM API",
         "version": "1.0.0",
