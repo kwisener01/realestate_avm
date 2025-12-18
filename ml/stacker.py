@@ -20,21 +20,31 @@ except ImportError:
     from ml.tabular_model import TabularModel
 
 # Optional imports for image and text models (require PyTorch)
+# These are set to None if PyTorch is not available
+ImageModelWrapper = None
+TextModelWrapper = None
+
 try:
     from image_model import ImageModelWrapper
-except ImportError:
+except (ImportError, ModuleNotFoundError):
+    pass  # Image model not available
+
+if ImageModelWrapper is None:
     try:
         from ml.image_model import ImageModelWrapper
-    except ImportError:
-        ImageModelWrapper = None  # PyTorch not available
+    except (ImportError, ModuleNotFoundError):
+        pass  # Image model not available
 
 try:
     from text_model import TextModelWrapper
-except ImportError:
+except (ImportError, ModuleNotFoundError):
+    pass  # Text model not available
+
+if TextModelWrapper is None:
     try:
         from ml.text_model import TextModelWrapper
-    except ImportError:
-        TextModelWrapper = None  # PyTorch not available
+    except (ImportError, ModuleNotFoundError):
+        pass  # Text model not available
 
 
 class StackerModel:
