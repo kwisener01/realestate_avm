@@ -50,11 +50,13 @@ def get_google_sheets_client(credentials_path: Optional[str] = None):
     Get authenticated Google Sheets client.
 
     Args:
-        credentials_path: Path to service account credentials JSON file
+        credentials_path: Path to service account credentials JSON file or JSON string
 
     Returns:
         Authenticated gspread client
     """
+    import json
+
     # Define required scopes
     scopes = [
         'https://www.googleapis.com/auth/spreadsheets',
@@ -62,22 +64,29 @@ def get_google_sheets_client(credentials_path: Optional[str] = None):
     ]
 
     # Use provided credentials or environment variable
-    creds_path = credentials_path or os.getenv('GOOGLE_SHEETS_CREDENTIALS')
+    creds_data = credentials_path or os.getenv('GOOGLE_SHEETS_CREDENTIALS')
 
-    if not creds_path:
+    if not creds_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Google Sheets credentials not provided. Set GOOGLE_SHEETS_CREDENTIALS environment variable or provide credentials_path in request."
         )
 
-    if not os.path.exists(creds_path):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Credentials file not found: {creds_path}"
-        )
-
     try:
-        credentials = Credentials.from_service_account_file(creds_path, scopes=scopes)
+        # Try to parse as JSON first (for environment variable)
+        try:
+            creds_dict = json.loads(creds_data)
+            credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        except (json.JSONDecodeError, ValueError):
+            # If not JSON, treat as file path
+            if os.path.exists(creds_data):
+                credentials = Credentials.from_service_account_file(creds_data, scopes=scopes)
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Credentials file not found: {creds_data}"
+                )
+
         client = gspread.authorize(credentials)
         return client
     except GoogleAuthError as e:
