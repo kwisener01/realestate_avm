@@ -101,7 +101,7 @@ def get_google_sheets_client(credentials_path: Optional[str] = None):
         )
 
 
-def parse_sheet_row(row: List[str]) -> Optional[PropertyFeatures]:
+def parse_sheet_row(row: List[str]) -> tuple[Optional[PropertyFeatures], Optional[str]]:
     """
     Parse a row from Google Sheets into PropertyFeatures.
 
@@ -113,32 +113,44 @@ def parse_sheet_row(row: List[str]) -> Optional[PropertyFeatures]:
         row: List of cell values from a sheet row
 
     Returns:
-        PropertyFeatures object or None if parsing fails
+        Tuple of (PropertyFeatures object or None, error message or None)
     """
     try:
         # Ensure we have enough columns (at least 13 for required features)
         if len(row) < 13:
-            return None
+            return None, f"Not enough columns (has {len(row)}, needs 13+)"
+
+        # Helper to safely convert values
+        def safe_int(val, default=0):
+            try:
+                return int(float(val)) if val and str(val).strip() else default
+            except:
+                return default
+
+        def safe_float(val, default=0.0):
+            try:
+                return float(val) if val and str(val).strip() else default
+            except:
+                return default
 
         features = PropertyFeatures(
-            bedrooms=int(row[0]) if row[0] else 0,
-            bathrooms=float(row[1]) if row[1] else 0.0,
-            sqft_living=int(row[2]) if row[2] else 0,
-            sqft_lot=int(row[3]) if row[3] else 0,
-            floors=float(row[4]) if row[4] else 1.0,
-            year_built=int(row[5]) if row[5] else 2000,
-            year_renovated=int(row[6]) if row[6] else 0,
-            latitude=float(row[7]) if row[7] else 0.0,
-            longitude=float(row[8]) if row[8] else 0.0,
-            property_type=str(row[9]) if row[9] else "Single Family",
-            neighborhood=str(row[10]) if row[10] else "Unknown",
-            condition=str(row[11]) if row[11] else "Average",
-            view_quality=str(row[12]) if row[12] else "None"
+            bedrooms=safe_int(row[0], 3),
+            bathrooms=safe_float(row[1], 2.0),
+            sqft_living=safe_int(row[2], 2000),
+            sqft_lot=safe_int(row[3], 5000),
+            floors=safe_float(row[4], 1.0),
+            year_built=safe_int(row[5], 2000),
+            year_renovated=safe_int(row[6], 0),
+            latitude=safe_float(row[7], 33.75),
+            longitude=safe_float(row[8], -84.28),
+            property_type=str(row[9]).strip() if row[9] else "Single Family",
+            neighborhood=str(row[10]).strip() if row[10] else "Unknown",
+            condition=str(row[11]).strip() if row[11] else "Average",
+            view_quality=str(row[12]).strip() if row[12] else "None"
         )
-        return features
-    except (ValueError, IndexError) as e:
-        print(f"Error parsing row: {e}")
-        return None
+        return features, None
+    except Exception as e:
+        return None, f"Parse error: {str(e)[:50]}"
 
 
 @router.post("/predict", response_model=GoogleSheetsResponse, status_code=status.HTTP_200_OK)
@@ -235,11 +247,11 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     for idx, row in enumerate(data_rows, start=request.start_row):
         try:
             # Parse features
-            features = parse_sheet_row(row)
+            features, error_msg = parse_sheet_row(row)
 
             if features is None:
                 failed += 1
-                results_to_write.append(["ERROR", "Parse failed", ""])
+                results_to_write.append(["ERROR", error_msg or "Parse failed", ""])
                 continue
 
             # Get description if available (column 14)
@@ -276,17 +288,17 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     written_back = False
     if request.write_back and results_to_write:
         try:
-            # Write to columns N, O, P (14, 15, 16)
+            # Write to columns X, Y, Z (24, 25, 26)
             # First, add/update header row
             header_row = request.start_row - 1
             if header_row >= 1:
-                worksheet.update(f'N{header_row}:P{header_row}',
+                worksheet.update(f'X{header_row}:Z{header_row}',
                                [['predicted_price', 'confidence', 'timestamp']])
 
             # Write prediction results
-            start_cell = f'N{request.start_row}'
+            start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'P{end_row}'
+            end_cell = f'Z{end_row}'
 
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)
             written_back = True
