@@ -19,32 +19,10 @@ except ImportError:
     # Fall back to absolute imports (when running from project root)
     from ml.tabular_model import TabularModel
 
-# Optional imports for image and text models (require PyTorch)
-# These are set to None if PyTorch is not available
+# Don't import image/text models at module level - they require PyTorch
+# They will be imported dynamically if needed
 ImageModelWrapper = None
 TextModelWrapper = None
-
-try:
-    from image_model import ImageModelWrapper
-except (ImportError, ModuleNotFoundError):
-    pass  # Image model not available
-
-if ImageModelWrapper is None:
-    try:
-        from ml.image_model import ImageModelWrapper
-    except (ImportError, ModuleNotFoundError):
-        pass  # Image model not available
-
-try:
-    from text_model import TextModelWrapper
-except (ImportError, ModuleNotFoundError):
-    pass  # Text model not available
-
-if TextModelWrapper is None:
-    try:
-        from ml.text_model import TextModelWrapper
-    except (ImportError, ModuleNotFoundError):
-        pass  # Text model not available
 
 
 class StackerModel:
@@ -69,8 +47,17 @@ class StackerModel:
         """
         # Initialize base models
         self.tabular_model = TabularModel(tabular_model_path) if tabular_model_path else None
-        self.image_model = ImageModelWrapper(image_model_path) if image_model_path else None
-        self.text_model = TextModelWrapper(text_model_path) if text_model_path else None
+
+        # Only load image/text models if their wrappers are available (PyTorch installed)
+        if image_model_path and ImageModelWrapper is not None:
+            self.image_model = ImageModelWrapper(image_model_path)
+        else:
+            self.image_model = None
+
+        if text_model_path and TextModelWrapper is not None:
+            self.text_model = TextModelWrapper(text_model_path)
+        else:
+            self.text_model = None
 
         # Initialize meta-learner
         self.meta_model = Ridge(alpha=1.0)
