@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: property_avm_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: property_avm
+      POSTGRES_USER: avm_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db_schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - avm_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U avm_user -d property_avm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Application
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    container_name: property_avm_api
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://avm_user:${DB_PASSWORD:-changeme123}@db:5432/property_avm
+      - MODEL_DIR=/app/models/stacker
+      - HOST=0.0.0.0
+      - PORT=8000
+    volumes:
+      - ../models:/app/models
+      - ../data:/app/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - avm_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis (for caching predictions)
+  redis:
+    image: redis:7-alpine
+    container_name: property_avm_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - avm_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # pgAdmin (Database Management UI)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: property_avm_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@avm.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+    networks:
+      - avm_network
+
+networks:
+  avm_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local

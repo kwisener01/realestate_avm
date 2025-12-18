@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(venvScriptsactivate)",
+      "Bash(where:*)",
+      "Bash(source venv/Scripts/activate)",
+      "Bash(python zillow_scraper.py:*)",
+      "Bash(python:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
