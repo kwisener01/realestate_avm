@@ -6,7 +6,11 @@
       "Bash(where:*)",
       "Bash(source venv/Scripts/activate)",
       "Bash(python zillow_scraper.py:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(git commit:*)",
+      "Bash(curl:*)",
+      "Bash(git add:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []

@@ -12,9 +12,29 @@ import joblib
 import os
 from typing import Dict, List, Optional, Tuple
 
-from ml.tabular_model import TabularModel
-from ml.image_model import ImageModelWrapper
-from ml.text_model import TextModelWrapper
+try:
+    # Try relative imports first (when running from ml/ directory)
+    from tabular_model import TabularModel
+except ImportError:
+    # Fall back to absolute imports (when running from project root)
+    from ml.tabular_model import TabularModel
+
+# Optional imports for image and text models (require PyTorch)
+try:
+    from image_model import ImageModelWrapper
+except ImportError:
+    try:
+        from ml.image_model import ImageModelWrapper
+    except ImportError:
+        ImageModelWrapper = None  # PyTorch not available
+
+try:
+    from text_model import TextModelWrapper
+except ImportError:
+    try:
+        from ml.text_model import TextModelWrapper
+    except ImportError:
+        TextModelWrapper = None  # PyTorch not available
 
 
 class StackerModel:
