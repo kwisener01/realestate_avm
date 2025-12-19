@@ -118,39 +118,68 @@ def parse_sheet_row(row: List[str]) -> tuple[Optional[PropertyFeatures], Optiona
     try:
         # Ensure we have enough columns (at least 13 for required features)
         if len(row) < 13:
-            return None, f"Not enough columns (has {len(row)}, needs 13+)"
+            return None, f"Need 13+ cols (has {len(row)})"
 
-        # Helper to safely convert values
-        def safe_int(val, default=0):
+        # Helper to safely convert values with validation-compliant defaults
+        def safe_int(val, default, min_val=None, max_val=None):
             try:
-                return int(float(val)) if val and str(val).strip() else default
+                result = int(float(val)) if val and str(val).strip() else default
+                if min_val is not None and result < min_val:
+                    result = default
+                if max_val is not None and result > max_val:
+                    result = default
+                return result
             except:
                 return default
 
-        def safe_float(val, default=0.0):
+        def safe_float(val, default, min_val=None, max_val=None):
             try:
-                return float(val) if val and str(val).strip() else default
+                result = float(val) if val and str(val).strip() else default
+                if min_val is not None and result < min_val:
+                    result = default
+                if max_val is not None and result > max_val:
+                    result = default
+                return result
             except:
                 return default
 
+        def safe_str(val, default, allowed=None):
+            try:
+                result = str(val).strip() if val else default
+                if allowed and result not in allowed:
+                    return default
+                return result
+            except:
+                return default
+
+        # Parse with validation-compliant defaults
         features = PropertyFeatures(
-            bedrooms=safe_int(row[0], 3),
-            bathrooms=safe_float(row[1], 2.0),
-            sqft_living=safe_int(row[2], 2000),
-            sqft_lot=safe_int(row[3], 5000),
-            floors=safe_float(row[4], 1.0),
-            year_built=safe_int(row[5], 2000),
-            year_renovated=safe_int(row[6], 0),
-            latitude=safe_float(row[7], 33.75),
-            longitude=safe_float(row[8], -84.28),
-            property_type=str(row[9]).strip() if row[9] else "Single Family",
-            neighborhood=str(row[10]).strip() if row[10] else "Unknown",
-            condition=str(row[11]).strip() if row[11] else "Average",
-            view_quality=str(row[12]).strip() if row[12] else "None"
+            bedrooms=safe_int(row[0], 3, min_val=1),
+            bathrooms=safe_float(row[1], 2.0, min_val=1.0),
+            sqft_living=safe_int(row[2], 2000, min_val=100),
+            sqft_lot=safe_int(row[3], 5000, min_val=0),
+            floors=safe_float(row[4], 1.0, min_val=1.0, max_val=5.0),
+            year_built=safe_int(row[5], 2000, min_val=1800, max_val=2025),
+            year_renovated=safe_int(row[6], 0, min_val=0, max_val=2025),
+            latitude=safe_float(row[7], 33.75, min_val=-90.0, max_val=90.0),
+            longitude=safe_float(row[8], -84.28, min_val=-180.0, max_val=180.0),
+            property_type=safe_str(row[9], "Single Family",
+                                  allowed=['Single Family', 'Townhouse', 'Condo', 'Multi-Family']),
+            neighborhood=safe_str(row[10], "Unknown"),
+            condition=safe_str(row[11], "Average",
+                             allowed=['Poor', 'Fair', 'Average', 'Good', 'Excellent']),
+            view_quality=safe_str(row[12], "None",
+                                allowed=['None', 'Fair', 'Good', 'Excellent'])
         )
         return features, None
     except Exception as e:
-        return None, f"Parse error: {str(e)[:50]}"
+        # Extract just the key part of validation error
+        error_msg = str(e)
+        if 'validation error' in error_msg.lower():
+            # Simplify pydantic error messages
+            lines = error_msg.split('\n')
+            return None, f"Invalid: {lines[0][:40]}"
+        return None, f"Error: {error_msg[:40]}"
 
 
 @router.post("/predict", response_model=GoogleSheetsResponse, status_code=status.HTTP_200_OK)
