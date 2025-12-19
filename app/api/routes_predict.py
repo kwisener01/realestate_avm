@@ -53,8 +53,17 @@ async def predict_property_value(request: PredictionRequest):
         # Prepare image data (in production, download from URL)
         image_paths = None  # Would implement image download in production
 
+        # Check if meta-model is trained (required for ensemble)
+        meta_model_trained = False
+        try:
+            # Check if meta_model has been fitted
+            if hasattr(stacker_model.meta_model, 'coef_'):
+                meta_model_trained = True
+        except:
+            meta_model_trained = False
+
         # Make prediction
-        if request.use_ensemble:
+        if request.use_ensemble and meta_model_trained:
             # Get detailed breakdown
             breakdown_dict = stacker_model.predict_with_breakdown(
                 tabular_data=tabular_df,
@@ -83,7 +92,7 @@ async def predict_property_value(request: PredictionRequest):
                 confidence = 0.85  # Default confidence for single model
 
         else:
-            # Use only tabular model
+            # Use only tabular model (meta-model not trained or ensemble not requested)
             predicted_price = float(stacker_model.tabular_model.predict(tabular_df)[0])
             model_breakdown = ModelBreakdown(tabular=predicted_price)
             confidence = 0.80

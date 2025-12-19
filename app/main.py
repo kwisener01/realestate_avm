@@ -38,13 +38,18 @@ async def lifespan(app: FastAPI):
     if os.path.exists(model_dir):
         try:
             print(f"Loading models from {model_dir}...")
+
+            # Build paths for available models
+            tabular_path = os.path.join(model_dir, "tabular_model.joblib")
+            image_path = os.path.join(model_dir, "image_model.pth")
+            text_path = os.path.join(model_dir, "text_model.pth")
+            meta_path = os.path.join(model_dir, "meta_model.joblib")
+
             stacker_model = StackerModel(
-                tabular_model_path=os.path.join(model_dir, "tabular_model.joblib"),
-                image_model_path=os.path.join(model_dir, "image_model.pth")
-                if os.path.exists(os.path.join(model_dir, "image_model.pth")) else None,
-                text_model_path=os.path.join(model_dir, "text_model.pth")
-                if os.path.exists(os.path.join(model_dir, "text_model.pth")) else None,
-                meta_model_path=os.path.join(model_dir, "meta_model.joblib")
+                tabular_model_path=tabular_path if os.path.exists(tabular_path) else None,
+                image_model_path=image_path if os.path.exists(image_path) else None,
+                text_model_path=text_path if os.path.exists(text_path) else None,
+                meta_model_path=meta_path if os.path.exists(meta_path) else None
             )
             routes_predict.set_model(stacker_model)
             routes_sheets.set_model(stacker_model)
