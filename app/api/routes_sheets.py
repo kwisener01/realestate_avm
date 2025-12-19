@@ -284,41 +284,34 @@ def parse_sheet_row(row: List[str]) -> tuple[Optional[PropertyFeatures], Optiona
 @router.post("/predict", response_model=GoogleSheetsResponse, status_code=status.HTTP_200_OK)
 async def predict_from_sheets(request: GoogleSheetsRequest):
     """
-    Process properties from Google Sheets with Hybrid ARV Model.
+    Process properties from Google Sheets with Location-Based ARV Model.
 
     ## Expected Sheet Format
 
-    The sheet should have columns in this order (with header row):
-    **Required columns (1-13):**
-    1. bedrooms (int)
-    2. bathrooms (float)
-    3. sqft_living (int)
-    4. sqft_lot (int)
-    5. floors (float)
-    6. year_built (int)
-    7. year_renovated (int)
-    8. latitude (float)
-    9. longitude (float)
-    10. property_type (string: Single Family, Townhouse, Condo, Multi-Family)
-    11. neighborhood (string)
-    12. condition (string: Poor, Fair, Average, Good, Excellent)
-    13. view_quality (string: None, Fair, Good, Excellent)
+    The sheet should have a header row with these column names (order doesn't matter):
+    - **List Price** - Property listing price
+    - **Distance** - Distance from Atlanta (e.g., "50.8 mi" or just "50.8")
+    - **Days On Market** - How long property has been listed
+    - **City** - City name (for location bonus)
 
-    **Optional columns for hybrid ARV:**
-    14. description (string)
-    15. list_price (number, for location-based ARV)
-    16. distance (string like "50.8 mi" or number, distance from Atlanta)
-    17. days_on_market (int)
-    18. city (string, for location bonus)
+    Optional columns:
+    - County, Address, MLS #, etc. (will be ignored)
 
-    ## Hybrid ARV Output
+    ## Output Columns
 
-    If hybrid data (columns 15-18) is provided, writes 5 columns:
-    - **X: Deal Status** - Shows which model(s) think it's a deal
+    Writes 3 columns to the sheet:
+    - **X: Deal Status** - "Deal" if List Price ≤ 50% of ARV, else "No Deal"
     - **Y: ARV (Location)** - Location-based ARV estimate
-    - **Z: ARV (ML Model)** - Machine learning ARV estimate
-    - **AA: ARV (Average)** - Average of both models
-    - **AB: Confidence** - HIGH/MEDIUM/LOW based on model agreement
+    - **Z: Confidence** - Confidence level based on factors
+
+    ## ARV Calculation
+
+    Uses distance from Atlanta, days on market, and city to calculate ARV:
+    - Base multiplier: 1.75x
+    - Distance bonus: 0-10 mi (+0.25), 10-20 mi (+0.15), etc.
+    - DOM bonus: 180+ days (+0.15), 90-180 days (+0.10), etc.
+    - City premium: High-value cities (+0.10), moderate (+0.05)
+    - Final multiplier: 1.5x - 2.3x
 
     ## Authentication
 
@@ -327,11 +320,6 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     - Request parameter: `credentials_path`
     - Environment variable: `GOOGLE_SHEETS_CREDENTIALS`
     """
-    if stacker_model is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Model not loaded. Please ensure models are trained and available."
-        )
 
     # Get Google Sheets client
     client = get_google_sheets_client(request.credentials_path)
@@ -368,124 +356,146 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                 detail=f"Sheet has fewer rows than start_row ({request.start_row})"
             )
 
+        # Get header row and find column positions
+        header_row = all_values[0] if all_values else []
+
+        # Find column indices by name (case-insensitive)
+        def find_column(header_row, possible_names):
+            """Find column index by trying multiple possible header names"""
+            header_lower = [h.lower().strip() for h in header_row]
+            for name in possible_names:
+                name_lower = name.lower()
+                if name_lower in header_lower:
+                    return header_lower.index(name_lower)
+            return None
+
+        col_list_price = find_column(header_row, ['list price', 'price', 'listing price'])
+        col_distance = find_column(header_row, ['distance'])
+        col_dom = find_column(header_row, ['days on market', 'dom', 'days on mkt'])
+        col_city = find_column(header_row, ['city'])
+
+        # Verify we have required columns
+        missing_cols = []
+        if col_list_price is None:
+            missing_cols.append('List Price')
+        if col_distance is None:
+            missing_cols.append('Distance')
+        if col_dom is None:
+            missing_cols.append('Days On Market')
+        if col_city is None:
+            missing_cols.append('City')
+
+        if missing_cols:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Missing required columns: {', '.join(missing_cols)}. Found columns: {', '.join(header_row[:10])}"
+            )
+
         # Get data rows (skip header)
         data_rows = all_values[request.start_row - 1:]
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to read sheet data: {str(e)}"
         )
 
-    # Process each row and make predictions
-    predictions: List[PredictionResponse] = []
+    # Helper functions for parsing
+    def extract_distance(val):
+        """Extract distance from string like '50.8 mi' or just '50.8'"""
+        try:
+            if not val or str(val).strip() == '':
+                return 30.0  # Default to moderate distance
+            val_str = str(val).strip()
+            match = re.search(r'([\d.]+)', val_str)
+            if match:
+                return float(match.group(1))
+            return 30.0
+        except:
+            return 30.0
+
+    def clean_price(val):
+        """Convert price string to numeric"""
+        try:
+            if not val or str(val).strip() == '':
+                return None
+            cleaned = re.sub(r'[,$]', '', str(val))
+            return float(cleaned)
+        except:
+            return None
+
+    def safe_int(val, default=0):
+        """Safely convert to int"""
+        try:
+            return int(float(val)) if val and str(val).strip() else default
+        except:
+            return default
+
+    # Process each row and calculate location-based ARV
     successful = 0
     failed = 0
     results_to_write = []
 
     for idx, row in enumerate(data_rows, start=request.start_row):
         try:
-            # Parse features and hybrid data
-            features, error_msg, hybrid_data = parse_sheet_row(row)
+            # Extract data from the correct columns
+            list_price = clean_price(row[col_list_price]) if col_list_price < len(row) else None
+            distance = extract_distance(row[col_distance]) if col_distance < len(row) else 30.0
+            days_on_market = safe_int(row[col_dom]) if col_dom < len(row) else 0
+            city = str(row[col_city]).strip() if col_city < len(row) and row[col_city] else "Atlanta"
 
-            if features is None:
+            # Skip if no list price
+            if not list_price or list_price <= 0:
                 failed += 1
-                results_to_write.append(["ERROR", error_msg or "Parse failed", "", "", ""])
+                results_to_write.append(["ERROR - No Price", "", ""])
                 continue
 
-            # Get description if available (column 14)
-            description = row[13] if len(row) > 13 and row[13] else None
+            # Calculate location-based ARV
+            multiplier = estimate_arv_multiplier(distance, days_on_market, city)
+            arv_location = list_price * multiplier
 
-            # Calculate ARV (ML Model) using trained model
-            from app.api.routes_predict import predict_property_value
+            # Determine deal status (list price <= 50% of ARV = deal)
+            is_deal = list_price <= (arv_location * 0.5)
+            deal_status = "Deal" if is_deal else "No Deal"
 
-            pred_request = PredictionRequest(
-                property_id=f"row_{idx}",
-                features=features,
-                description=description,
-                use_ensemble=request.use_ensemble
-            )
+            # Calculate confidence based on factors
+            confidence = "MEDIUM"
+            if distance <= 10 and days_on_market >= 90:
+                confidence = "HIGH"
+            elif distance > 40 or days_on_market < 30:
+                confidence = "LOW"
 
-            prediction = await predict_property_value(pred_request)
-            predictions.append(prediction)
             successful += 1
 
-            arv_ml = prediction.predicted_price
-
-            # Calculate ARV (Location) if hybrid data available
-            arv_location = None
-            arv_average = None
-            deal_status = "Deal (ML)"  # Default to ML-only
-            confidence = "MEDIUM - One Model"  # Default confidence
-
-            if hybrid_data and hybrid_data.get('list_price'):
-                # Calculate location-based ARV
-                multiplier = estimate_arv_multiplier(
-                    hybrid_data['distance'],
-                    hybrid_data['days_on_market'],
-                    hybrid_data['city']
-                )
-                arv_location = hybrid_data['list_price'] * multiplier
-
-                # Calculate average ARV
-                arv_average = (arv_location + arv_ml) / 2
-
-                # Determine deal status
-                list_price = hybrid_data['list_price']
-                is_deal_location = list_price <= (arv_location * 0.5)
-                is_deal_ml = list_price <= (arv_ml * 0.5)
-
-                if is_deal_location and is_deal_ml:
-                    deal_status = "DEAL ✓✓"
-                    confidence = "HIGH - Both Agree"
-                elif is_deal_location:
-                    deal_status = "Deal (Location)"
-                    confidence = "MEDIUM - One Model"
-                elif is_deal_ml:
-                    deal_status = "Deal (ML)"
-                    confidence = "MEDIUM - One Model"
-                else:
-                    deal_status = "No Deal"
-                    confidence = "LOW - Neither"
-            else:
-                # No hybrid data, use ML-only
-                arv_location = arv_ml
-                arv_average = arv_ml
-
-            # Format output
-            arv_loc_fmt = f"${arv_location:,.0f}" if arv_location else ""
-            arv_ml_fmt = f"${arv_ml:,.0f}"
-            arv_avg_fmt = f"${arv_average:,.0f}" if arv_average else ""
-
-            # Prepare data for writing back (5 columns)
+            # Format output (3 columns: Deal Status, ARV, Confidence)
             results_to_write.append([
                 deal_status,
-                arv_loc_fmt,
-                arv_ml_fmt,
-                arv_avg_fmt,
+                f"${arv_location:,.0f}",
                 confidence
             ])
 
         except Exception as e:
             failed += 1
-            results_to_write.append(["ERROR", str(e)[:100], "", "", ""])
+            results_to_write.append(["ERROR", str(e)[:50], ""])
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
     written_back = False
     if request.write_back and results_to_write:
         try:
-            # Write to columns X, Y, Z, AA, AB (24, 25, 26, 27, 28)
+            # Write to columns X, Y, Z (24, 25, 26)
             # First, add/update header row
             header_row = request.start_row - 1
             if header_row >= 1:
-                worksheet.update(f'X{header_row}:AB{header_row}',
-                               [['Deal Status', 'ARV (Location)', 'ARV (ML Model)', 'ARV (Average)', 'Confidence']])
+                worksheet.update(f'X{header_row}:Z{header_row}',
+                               [['Deal Status', 'ARV (Location)', 'Confidence']])
 
             # Write prediction results
             start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'AB{end_row}'
+            end_cell = f'Z{end_row}'
 
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)
             written_back = True
@@ -499,7 +509,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
         total_properties=len(data_rows),
         successful_predictions=successful,
         failed_predictions=failed,
-        predictions=predictions,
+        predictions=[],  # Empty list since we're not using ML predictions
         written_back=written_back,
         timestamp=datetime.now()
     )
