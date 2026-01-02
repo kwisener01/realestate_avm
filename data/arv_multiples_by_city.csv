@@ -1,0 +1,10 @@
+City,Count,Mean,Median,StdDev,Min,Max,Median Sale Price,Tier,Conservative,Aggressive
+Stone Mountain,52,2.95,2.93,0.5,1.71,4.63,379250.0,High Appreciation,2.64,3.37
+Atlanta,254,3.12,2.88,1.13,1.55,14.32,841250.0,High Appreciation,2.59,3.31
+Brookhaven,87,3.06,2.88,0.86,2.09,8.85,1175000.0,High Appreciation,2.59,3.31
+Avondale Estates,7,2.76,2.75,0.51,2.25,3.59,985000.0,Moderate Appreciation,2.48,3.16
+Decatur,110,2.88,2.73,0.73,1.67,7.83,685000.0,Moderate Appreciation,2.46,3.14
+Tucker,17,2.73,2.73,0.25,2.36,3.29,550000.0,Moderate Appreciation,2.46,2.96
+Lithonia,50,3.12,2.63,2.48,1.98,19.93,355000.0,Moderate Appreciation,2.37,3.02
+Ellenwood,9,2.66,2.62,0.23,2.26,3.05,363300.0,Moderate Appreciation,2.36,2.75
+Scottdale,7,4.37,2.52,5.19,1.76,16.11,480000.0,Lower Appreciation,2.27,2.9

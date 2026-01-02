@@ -1,5 +1,6 @@
 """
-Google Sheets integration API routes
+Google Sheets integration API routes - Updated for MLS Data
+Uses area-specific ARV multiples from flip analysis
 """
 
 from fastapi import APIRouter, HTTPException, status
@@ -15,9 +16,6 @@ from datetime import datetime
 from app.models.property_models import (
     GoogleSheetsRequest,
     GoogleSheetsResponse,
-    PredictionRequest,
-    PredictionResponse,
-    PropertyFeatures
 )
 
 router = APIRouter(prefix="/sheets", tags=["google-sheets"])
@@ -25,78 +23,90 @@ router = APIRouter(prefix="/sheets", tags=["google-sheets"])
 # Global variable for loaded models (set from main.py)
 stacker_model = None
 
+# Load area-specific ARV multiples
+arv_multiples_zip = None
+arv_multiples_city = None
+
+
+def load_arv_multiples():
+    """Load area-specific ARV multiples from CSV files"""
+    global arv_multiples_zip, arv_multiples_city
+
+    try:
+        zip_file = 'data/arv_multiples_by_area.csv'
+        city_file = 'data/arv_multiples_by_city.csv'
+
+        if os.path.exists(zip_file):
+            arv_multiples_zip = pd.read_csv(zip_file)
+            print(f"Loaded ARV multiples for {len(arv_multiples_zip)} zip codes")
+
+        if os.path.exists(city_file):
+            arv_multiples_city = pd.read_csv(city_file)
+            print(f"Loaded ARV multiples for {len(arv_multiples_city)} cities")
+
+        if arv_multiples_zip is None and arv_multiples_city is None:
+            print("WARNING: No ARV multiples loaded. Using defaults.")
+    except Exception as e:
+        print(f"Error loading ARV multiples: {e}")
+
 
 def set_model(model):
     """Set the global model instance"""
     global stacker_model
     stacker_model = model
+    # Load ARV multiples when model is set
+    load_arv_multiples()
 
 
-def estimate_arv_multiplier(distance: float, days_on_market: int, city: str) -> float:
+def get_arv_multiple(zipcode, city, scenario='moderate'):
     """
-    Estimate ARV multiplier based on location and market factors
+    Get ARV multiple for a specific zip/city
 
-    Logic:
-    - Closer to Atlanta (lower distance) = higher ARV potential
-    - Longer days on market = more distressed = higher ARV upside
-    - Certain areas have better appreciation potential
+    Args:
+        zipcode: 5-digit zip code
+        city: City name
+        scenario: 'conservative', 'moderate', or 'aggressive'
+
+    Returns:
+        ARV multiple (float)
     """
-    # Base multiplier for fix-and-flip
-    base_multiplier = 1.75
+    global arv_multiples_zip, arv_multiples_city
 
-    # Distance factor: Closer to Atlanta = higher multiplier
-    if distance <= 10:
-        distance_bonus = 0.25
-    elif distance <= 20:
-        distance_bonus = 0.15
-    elif distance <= 30:
-        distance_bonus = 0.10
-    elif distance <= 40:
-        distance_bonus = 0.05
-    else:
-        distance_bonus = 0.0
+    # Try zip code first (more specific)
+    if arv_multiples_zip is not None and zipcode:
+        zip_match = arv_multiples_zip[arv_multiples_zip['Zip'] == str(zipcode)]
+        if len(zip_match) > 0:
+            col_name = f'{scenario.capitalize()}_Multiple'
+            return float(zip_match.iloc[0][col_name])
 
-    # Days on market factor: More days = more distressed = higher potential
-    if days_on_market >= 180:
-        dom_bonus = 0.15
-    elif days_on_market >= 90:
-        dom_bonus = 0.10
-    elif days_on_market >= 30:
-        dom_bonus = 0.05
-    else:
-        dom_bonus = 0.0
+    # Fall back to city level
+    if arv_multiples_city is not None and city:
+        city_match = arv_multiples_city[arv_multiples_city['City'].str.lower() == str(city).lower()]
+        if len(city_match) > 0:
+            if scenario == 'conservative':
+                return float(city_match.iloc[0]['Conservative'])
+            elif scenario == 'moderate':
+                return float(city_match.iloc[0]['Median'])
+            elif scenario == 'aggressive':
+                return float(city_match.iloc[0]['Aggressive'])
 
-    # High-value areas
-    high_value_cities = ['Atlanta', 'Decatur', 'Brookhaven', 'Sandy Springs',
-                        'Alpharetta', 'Roswell', 'Marietta']
-    moderate_value_cities = ['Lithonia', 'Riverdale', 'College Park', 'East Point',
-                            'Forest Park', 'Smyrna', 'Dunwoody']
-
-    city_bonus = 0.0
-    if city in high_value_cities:
-        city_bonus = 0.10
-    elif city in moderate_value_cities:
-        city_bonus = 0.05
-
-    # Calculate final multiplier
-    final_multiplier = base_multiplier + distance_bonus + dom_bonus + city_bonus
-
-    # Cap between 1.5 and 2.3
-    final_multiplier = max(1.5, min(2.3, final_multiplier))
-
-    return final_multiplier
+    # Default to overall averages if no match
+    defaults = {
+        'conservative': 2.59,
+        'moderate': 2.82,
+        'aggressive': 3.22
+    }
+    return defaults.get(scenario, 2.82)
 
 
 def extract_sheet_id(sheet_url: str) -> str:
     """Extract Google Sheets ID from URL or return as-is if already an ID"""
-    # Pattern for Google Sheets URL
     pattern = r'/spreadsheets/d/([a-zA-Z0-9-_]+)'
     match = re.search(pattern, sheet_url)
 
     if match:
         return match.group(1)
 
-    # Assume it's already an ID if no pattern match
     return sheet_url
 
 
@@ -112,19 +122,17 @@ def get_google_sheets_client(credentials_path: Optional[str] = None):
     """
     import json
 
-    # Define required scopes
     scopes = [
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive'
     ]
 
-    # Use provided credentials or environment variable
     creds_data = credentials_path or os.getenv('GOOGLE_SHEETS_CREDENTIALS')
 
     if not creds_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Google Sheets credentials not provided. Set GOOGLE_SHEETS_CREDENTIALS environment variable or provide credentials_path in request."
+            detail="Google Sheets credentials not provided. Set GOOGLE_SHEETS_CREDENTIALS environment variable."
         )
 
     try:
@@ -156,169 +164,88 @@ def get_google_sheets_client(credentials_path: Optional[str] = None):
         )
 
 
-def parse_sheet_row(row: List[str]) -> tuple[Optional[PropertyFeatures], Optional[str], Optional[dict]]:
-    """
-    Parse a row from Google Sheets into PropertyFeatures plus hybrid ARV data.
-
-    Expected columns (in order):
-    1-13: bedrooms, bathrooms, sqft_living, sqft_lot, floors, year_built, year_renovated,
-          latitude, longitude, property_type, neighborhood, condition, view_quality
-    14: description (optional)
-    15: list_price (for location ARV)
-    16: distance (from Atlanta, in miles)
-    17: days_on_market
-    18: city (for location ARV)
-
-    Args:
-        row: List of cell values from a sheet row
-
-    Returns:
-        Tuple of (PropertyFeatures object or None, error message or None, hybrid_data dict or None)
-    """
+def clean_price(val):
+    """Convert price string to numeric"""
     try:
-        # Ensure we have enough columns (at least 13 for required features)
-        if len(row) < 13:
-            return None, f"Need 13+ cols (has {len(row)})", None
+        if not val or str(val).strip() == '':
+            return None
+        cleaned = re.sub(r'[,$]', '', str(val))
+        return float(cleaned)
+    except:
+        return None
 
-        # Helper to safely convert values with validation-compliant defaults
-        def safe_int(val, default, min_val=None, max_val=None):
-            try:
-                result = int(float(val)) if val and str(val).strip() else default
-                if min_val is not None and result < min_val:
-                    result = default
-                if max_val is not None and result > max_val:
-                    result = default
-                return result
-            except:
-                return default
 
-        def safe_float(val, default, min_val=None, max_val=None):
-            try:
-                result = float(val) if val and str(val).strip() else default
-                if min_val is not None and result < min_val:
-                    result = default
-                if max_val is not None and result > max_val:
-                    result = default
-                return result
-            except:
-                return default
+def safe_int(val, default=0):
+    """Safely convert to int"""
+    try:
+        return int(float(val)) if val and str(val).strip() else default
+    except:
+        return default
 
-        def safe_str(val, default, allowed=None):
-            try:
-                result = str(val).strip() if val else default
-                if allowed and result not in allowed:
-                    return default
-                return result
-            except:
-                return default
 
-        def extract_distance(val):
-            """Extract distance from string like '50.8 mi' or just '50.8'"""
-            try:
-                if not val or str(val).strip() == '':
-                    return 30.0  # Default to moderate distance
-                val_str = str(val).strip()
-                match = re.search(r'([\d.]+)', val_str)
-                if match:
-                    return float(match.group(1))
-                return 30.0
-            except:
-                return 30.0
-
-        def clean_price(val):
-            """Convert price string to numeric"""
-            try:
-                if not val or str(val).strip() == '':
-                    return None
-                cleaned = re.sub(r'[,$]', '', str(val))
-                return float(cleaned)
-            except:
-                return None
-
-        # Parse with validation-compliant defaults
-        features = PropertyFeatures(
-            bedrooms=safe_int(row[0], 3, min_val=1),
-            bathrooms=safe_float(row[1], 2.0, min_val=1.0),
-            sqft_living=safe_int(row[2], 2000, min_val=100),
-            sqft_lot=safe_int(row[3], 5000, min_val=0),
-            floors=safe_float(row[4], 1.0, min_val=1.0, max_val=5.0),
-            year_built=safe_int(row[5], 2000, min_val=1800, max_val=2025),
-            year_renovated=safe_int(row[6], 0, min_val=0, max_val=2025),
-            latitude=safe_float(row[7], 33.75, min_val=-90.0, max_val=90.0),
-            longitude=safe_float(row[8], -84.28, min_val=-180.0, max_val=180.0),
-            property_type=safe_str(row[9], "Single Family",
-                                  allowed=['Single Family', 'Townhouse', 'Condo', 'Multi-Family']),
-            neighborhood=safe_str(row[10], "Unknown"),
-            condition=safe_str(row[11], "Average",
-                             allowed=['Poor', 'Fair', 'Average', 'Good', 'Excellent']),
-            view_quality=safe_str(row[12], "None",
-                                allowed=['None', 'Fair', 'Good', 'Excellent'])
-        )
-
-        # Parse hybrid ARV data (columns 15-18) if available
-        hybrid_data = None
-        if len(row) >= 18:
-            list_price = clean_price(row[14])  # Column 15
-            distance = extract_distance(row[15])  # Column 16
-            days_on_market = safe_int(row[16], 0, min_val=0)  # Column 17
-            city = safe_str(row[17], "Atlanta")  # Column 18
-
-            hybrid_data = {
-                'list_price': list_price,
-                'distance': distance,
-                'days_on_market': days_on_market,
-                'city': city
-            }
-
-        return features, None, hybrid_data
-    except Exception as e:
-        # Extract just the key part of validation error
-        error_msg = str(e)
-        if 'validation error' in error_msg.lower():
-            # Simplify pydantic error messages
-            lines = error_msg.split('\n')
-            return None, f"Invalid: {lines[0][:40]}", None
-        return None, f"Error: {error_msg[:40]}", None
+def clean_zip(val):
+    """Extract 5-digit zip code"""
+    try:
+        if not val:
+            return None
+        # Extract first 5 digits
+        zip_str = str(val).strip()
+        match = re.search(r'(\d{5})', zip_str)
+        if match:
+            return match.group(1)
+        return None
+    except:
+        return None
 
 
 @router.post("/predict", response_model=GoogleSheetsResponse, status_code=status.HTTP_200_OK)
 async def predict_from_sheets(request: GoogleSheetsRequest):
     """
-    Process properties from Google Sheets with Location-Based ARV Model.
+    Process MLS listings from Google Sheets with Area-Specific ARV Analysis.
 
-    ## Expected Sheet Format
+    ## Expected Sheet Format (MLS Data)
 
-    The sheet should have a header row with these column names (order doesn't matter):
-    - **List Price** - Property listing price
-    - **Distance** - Distance from Atlanta (e.g., "50.8 mi" or just "50.8")
-    - **Days On Market** - How long property has been listed
-    - **City** - City name (for location bonus)
+    Required columns (names are flexible):
+    - **City** - Property city
+    - **Zip** - 5-digit zip code
+    - **List Price** (or Price, MLS Amount) - Listing price
+    - **Days On Market** (or DOM) - Days listed
 
-    Optional columns:
-    - County, Address, MLS #, etc. (will be ignored)
+    Optional columns (will be included in analysis but not required):
+    - Street Number, Street Name, Address
+    - Parcel Number, County Code, MLS #
+    - Owner info, Agent info, etc.
 
     ## Output Columns
 
-    Writes 3 columns to the sheet:
-    - **X: Deal Status** - "Deal" if List Price ≤ 50% of ARV, else "No Deal"
-    - **Y: ARV (Location)** - Location-based ARV estimate
-    - **Z: Confidence** - Confidence level based on factors
+    Writes 5 columns to the sheet (columns X, Y, Z, AA, AB):
+    - **X: Deal Status** - GOOD DEAL, MAYBE, or NO DEAL
+    - **Y: ARV (Conservative)** - Conservative ARV estimate (25th percentile)
+    - **Z: ARV (Moderate)** - Recommended ARV estimate (median)
+    - **AA: ARV (Aggressive)** - Optimistic ARV estimate (75th percentile)
+    - **AB: Confidence** - HIGH, MEDIUM, or LOW based on data source
 
     ## ARV Calculation
 
-    Uses distance from Atlanta, days on market, and city to calculate ARV:
-    - Base multiplier: 1.75x
-    - Distance bonus: 0-10 mi (+0.25), 10-20 mi (+0.15), etc.
-    - DOM bonus: 180+ days (+0.15), 90-180 days (+0.10), etc.
-    - City premium: High-value cities (+0.10), moderate (+0.05)
-    - Final multiplier: 1.5x - 2.3x
+    Uses area-specific multiples derived from 598 actual flip transactions:
+    - Zip code level: Most accurate (if available)
+    - City level: Fallback if zip not found
+    - Default: Overall market average (2.82x)
+
+    Formula: ARV = Assessed Value × Area Multiple
+
+    If assessed value not available, estimates as 35% of list price.
+
+    ## Deal Criteria
+
+    - **GOOD DEAL**: List price ≤ 50% of moderate ARV
+    - **MAYBE**: List price ≤ 60% of moderate ARV
+    - **NO DEAL**: List price > 60% of moderate ARV
 
     ## Authentication
 
-    Requires Google service account credentials with access to the sheet.
-    Provide credentials via:
-    - Request parameter: `credentials_path`
-    - Environment variable: `GOOGLE_SHEETS_CREDENTIALS`
+    Requires Google service account credentials with Editor access to the sheet.
+    Set via GOOGLE_SHEETS_CREDENTIALS environment variable.
     """
 
     # Get Google Sheets client
@@ -329,16 +256,14 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
     try:
         spreadsheet = client.open_by_key(sheet_id)
-        worksheet = spreadsheet.worksheet(request.sheet_name)
+
+        # Get first worksheet (since user said only one tab)
+        worksheet = spreadsheet.get_worksheet(0)
+
     except gspread.SpreadsheetNotFound:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Spreadsheet not found: {sheet_id}. Ensure the service account has access."
-        )
-    except gspread.WorksheetNotFound:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Worksheet '{request.sheet_name}' not found in spreadsheet"
+            detail=f"Spreadsheet not found: {sheet_id}. Ensure the service account has Editor access."
         )
     except Exception as e:
         raise HTTPException(
@@ -359,7 +284,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
         # Get header row and find column positions
         header_row = all_values[0] if all_values else []
 
-        # Find column indices by name (case-insensitive)
+        # Find column indices by name (case-insensitive, flexible)
         def find_column(header_row, possible_names):
             """Find column index by trying multiple possible header names"""
             header_lower = [h.lower().strip() for h in header_row]
@@ -369,26 +294,25 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     return header_lower.index(name_lower)
             return None
 
-        col_list_price = find_column(header_row, ['list price', 'price', 'listing price'])
-        col_distance = find_column(header_row, ['distance'])
-        col_dom = find_column(header_row, ['days on market', 'dom', 'days on mkt'])
         col_city = find_column(header_row, ['city'])
+        col_zip = find_column(header_row, ['zip', 'zipcode', 'zip code'])
+        col_list_price = find_column(header_row, ['list price', 'price', 'mls amount', 'sale price'])
+        col_dom = find_column(header_row, ['days on market', 'dom', 'days on mkt'])
+        col_assessed = find_column(header_row, ['total assessed value', 'assessed value', 'tax assessed value'])
 
         # Verify we have required columns
         missing_cols = []
-        if col_list_price is None:
-            missing_cols.append('List Price')
-        if col_distance is None:
-            missing_cols.append('Distance')
-        if col_dom is None:
-            missing_cols.append('Days On Market')
         if col_city is None:
             missing_cols.append('City')
+        if col_zip is None:
+            missing_cols.append('Zip')
+        if col_list_price is None:
+            missing_cols.append('List Price (or Price/MLS Amount)')
 
         if missing_cols:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Missing required columns: {', '.join(missing_cols)}. Found columns: {', '.join(header_row[:10])}"
+                detail=f"Missing required columns: {', '.join(missing_cols)}. Found: {', '.join(header_row[:10])}"
             )
 
         # Get data rows (skip header)
@@ -402,38 +326,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
             detail=f"Failed to read sheet data: {str(e)}"
         )
 
-    # Helper functions for parsing
-    def extract_distance(val):
-        """Extract distance from string like '50.8 mi' or just '50.8'"""
-        try:
-            if not val or str(val).strip() == '':
-                return 30.0  # Default to moderate distance
-            val_str = str(val).strip()
-            match = re.search(r'([\d.]+)', val_str)
-            if match:
-                return float(match.group(1))
-            return 30.0
-        except:
-            return 30.0
-
-    def clean_price(val):
-        """Convert price string to numeric"""
-        try:
-            if not val or str(val).strip() == '':
-                return None
-            cleaned = re.sub(r'[,$]', '', str(val))
-            return float(cleaned)
-        except:
-            return None
-
-    def safe_int(val, default=0):
-        """Safely convert to int"""
-        try:
-            return int(float(val)) if val and str(val).strip() else default
-        except:
-            return default
-
-    # Process each row and calculate location-based ARV
+    # Process each row and calculate area-specific ARV
     successful = 0
     failed = 0
     results_to_write = []
@@ -441,61 +334,98 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     for idx, row in enumerate(data_rows, start=request.start_row):
         try:
             # Extract data from the correct columns
+            city = str(row[col_city]).strip() if col_city < len(row) and row[col_city] else None
+            zipcode = clean_zip(row[col_zip]) if col_zip < len(row) else None
             list_price = clean_price(row[col_list_price]) if col_list_price < len(row) else None
-            distance = extract_distance(row[col_distance]) if col_distance < len(row) else 30.0
-            days_on_market = safe_int(row[col_dom]) if col_dom < len(row) else 0
-            city = str(row[col_city]).strip() if col_city < len(row) and row[col_city] else "Atlanta"
+            days_on_market = safe_int(row[col_dom]) if col_dom is not None and col_dom < len(row) else 0
+            assessed_value = clean_price(row[col_assessed]) if col_assessed is not None and col_assessed < len(row) else None
 
             # Skip if no list price
             if not list_price or list_price <= 0:
                 failed += 1
-                results_to_write.append(["ERROR - No Price", "", ""])
+                results_to_write.append(["ERROR - No Price", "", "", "", ""])
                 continue
 
-            # Calculate location-based ARV
-            multiplier = estimate_arv_multiplier(distance, days_on_market, city)
-            arv_location = list_price * multiplier
+            # Skip if no city or zip
+            if not city and not zipcode:
+                failed += 1
+                results_to_write.append(["ERROR - No Location", "", "", "", ""])
+                continue
 
-            # Determine deal status (list price <= 50% of ARV = deal)
-            is_deal = list_price <= (arv_location * 0.5)
-            deal_status = "Deal" if is_deal else "No Deal"
+            # Estimate assessed value if not provided (typically 35% of market value)
+            if not assessed_value or assessed_value <= 0:
+                assessed_value = list_price * 0.35
 
-            # Calculate confidence based on factors
-            confidence = "MEDIUM"
-            if distance <= 10 and days_on_market >= 90:
-                confidence = "HIGH"
-            elif distance > 40 or days_on_market < 30:
-                confidence = "LOW"
+            # Get area-specific multiples
+            mult_conservative = get_arv_multiple(zipcode, city, 'conservative')
+            mult_moderate = get_arv_multiple(zipcode, city, 'moderate')
+            mult_aggressive = get_arv_multiple(zipcode, city, 'aggressive')
+
+            # Calculate ARVs
+            arv_conservative = assessed_value * mult_conservative
+            arv_moderate = assessed_value * mult_moderate
+            arv_aggressive = assessed_value * mult_aggressive
+
+            # Determine deal status based on 70% rule (or 50% for great deals)
+            # GOOD DEAL: List price <= 50% of ARV
+            # MAYBE: List price <= 60% of ARV
+            # NO DEAL: List price > 60% of ARV
+            arv_ratio = list_price / arv_moderate
+
+            if arv_ratio <= 0.50:
+                deal_status = "GOOD DEAL"
+            elif arv_ratio <= 0.60:
+                deal_status = "MAYBE"
+            else:
+                deal_status = "NO DEAL"
+
+            # Determine confidence based on data source
+            if zipcode and arv_multiples_zip is not None:
+                zip_match = arv_multiples_zip[arv_multiples_zip['Zip'] == str(zipcode)]
+                if len(zip_match) > 0:
+                    sample_size = zip_match.iloc[0]['Sample_Size']
+                    if sample_size >= 20:
+                        confidence = "HIGH"
+                    elif sample_size >= 10:
+                        confidence = "MEDIUM"
+                    else:
+                        confidence = "LOW"
+                else:
+                    confidence = "MEDIUM"  # City-level fallback
+            else:
+                confidence = "MEDIUM"  # City-level or default
 
             successful += 1
 
-            # Format output (3 columns: Deal Status, ARV, Confidence)
+            # Format output (5 columns)
             results_to_write.append([
                 deal_status,
-                f"${arv_location:,.0f}",
+                f"${arv_conservative:,.0f}",
+                f"${arv_moderate:,.0f}",
+                f"${arv_aggressive:,.0f}",
                 confidence
             ])
 
         except Exception as e:
             failed += 1
-            results_to_write.append(["ERROR", str(e)[:50], ""])
+            results_to_write.append(["ERROR", str(e)[:30], "", "", ""])
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
     written_back = False
     if request.write_back and results_to_write:
         try:
-            # Write to columns X, Y, Z (24, 25, 26)
+            # Write to columns X, Y, Z, AA, AB (24, 25, 26, 27, 28)
             # First, add/update header row
-            header_row = request.start_row - 1
-            if header_row >= 1:
-                worksheet.update(f'X{header_row}:Z{header_row}',
-                               [['Deal Status', 'ARV (Location)', 'Confidence']])
+            header_row_num = request.start_row - 1
+            if header_row_num >= 1:
+                worksheet.update(f'X{header_row_num}:AB{header_row_num}',
+                               [['Deal Status', 'ARV (Conservative)', 'ARV (Moderate)', 'ARV (Aggressive)', 'Confidence']])
 
             # Write prediction results
             start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'Z{end_row}'
+            end_cell = f'AB{end_row}'
 
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)
             written_back = True
@@ -509,7 +439,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
         total_properties=len(data_rows),
         successful_predictions=successful,
         failed_predictions=failed,
-        predictions=[],  # Empty list since we're not using ML predictions
+        predictions=[],
         written_back=written_back,
         timestamp=datetime.now()
     )
@@ -520,9 +450,14 @@ async def sheets_health():
     """Check if Google Sheets integration is healthy"""
     creds_path = os.getenv('GOOGLE_SHEETS_CREDENTIALS')
 
+    # Check if ARV multiples are loaded
+    multiples_loaded = arv_multiples_zip is not None or arv_multiples_city is not None
+
     return {
         "status": "ready",
-        "credentials_configured": creds_path is not None and os.path.exists(creds_path) if creds_path else False,
-        "model_loaded": stacker_model is not None,
+        "credentials_configured": creds_path is not None,
+        "arv_multiples_loaded": multiples_loaded,
+        "zip_codes_available": len(arv_multiples_zip) if arv_multiples_zip is not None else 0,
+        "cities_available": len(arv_multiples_city) if arv_multiples_city is not None else 0,
         "timestamp": datetime.now()
     }

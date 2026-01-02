@@ -16,6 +16,10 @@ data/*.csv
 data/*.xlsx
 *.pkl
 
+# Exception: Include ARV multiples for deployment
+!data/arv_multiples_by_area.csv
+!data/arv_multiples_by_city.csv
+
 # Credentials
 credentials.json
 *.pem
