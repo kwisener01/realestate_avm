@@ -1,17 +1,19 @@
-City,Count,Mean,Median,StdDev,Min,Max,Median Sale Price,Tier,Conservative,Aggressive,County
-Stone Mountain,52,2.95,2.93,0.5,1.71,4.63,379250.0,High Appreciation,2.64,3.37,Arv
-Atlanta,254,3.12,2.88,1.13,1.55,14.32,841250.0,High Appreciation,2.59,3.31,Arv
-Brookhaven,87,3.06,2.88,0.86,2.09,8.85,1175000.0,High Appreciation,2.59,3.31,Arv
-Avondale Estates,7,2.76,2.75,0.51,2.25,3.59,985000.0,Moderate Appreciation,2.48,3.16,Arv
-Decatur,110,2.88,2.73,0.73,1.67,7.83,685000.0,Moderate Appreciation,2.46,3.14,Arv
-Tucker,17,2.73,2.73,0.25,2.36,3.29,550000.0,Moderate Appreciation,2.46,2.96,Arv
-Lithonia,50,3.12,2.63,2.48,1.98,19.93,355000.0,Moderate Appreciation,2.37,3.02,Arv
-Ellenwood,9,2.66,2.62,0.23,2.26,3.05,363300.0,Moderate Appreciation,2.36,2.75,Arv
-Scottdale,7,4.37,2.52,5.19,1.76,16.11,480000.0,Lower Appreciation,2.27,2.9,Arv
-Acworth,15,,1.82,1.03,1.57,4.97,305000.0,,1.69,2.64,Cobb
-Austell,12,,1.77,0.48,1.51,2.96,180000.0,,1.69,2.17,Cobb
-Kennesaw,22,,2.02,0.66,1.57,4.69,299189.5,,1.82,2.45,Cobb
-Mableton,22,,2.15,0.64,1.62,3.99,288500.0,,1.99,2.54,Cobb
-Marietta,119,,2.34,0.62,1.55,4.64,335000.0,,2.07,2.7,Cobb
-Powder Springs,26,,2.09,0.66,1.56,4.4,227000.0,,1.74,2.46,Cobb
-Smyrna,36,,2.38,0.54,1.56,4.22,285500.0,,2.1,2.6,Cobb
+City,Count,Mean,Median,StdDev,Min,Max,Median Sale Price,Tier,Conservative,Aggressive,County,Sample_Size,Mean_Multiple,Median_Multiple,Min_Multiple,Max_Multiple,Median_Price,Conservative_Multiple,Aggressive_Multiple
+Stone Mountain,52.0,2.95,2.93,0.5,1.71,4.63,379250.0,High Appreciation,2.64,3.37,Arv,,,,,,,,
+Atlanta,254.0,3.12,2.88,1.13,1.55,14.32,841250.0,High Appreciation,2.59,3.31,Arv,,,,,,,,
+Brookhaven,87.0,3.06,2.88,0.86,2.09,8.85,1175000.0,High Appreciation,2.59,3.31,Arv,,,,,,,,
+Avondale Estates,7.0,2.76,2.75,0.51,2.25,3.59,985000.0,Moderate Appreciation,2.48,3.16,Arv,,,,,,,,
+Decatur,110.0,2.88,2.73,0.73,1.67,7.83,685000.0,Moderate Appreciation,2.46,3.14,Arv,,,,,,,,
+Tucker,17.0,2.73,2.73,0.25,2.36,3.29,550000.0,Moderate Appreciation,2.46,2.96,Arv,,,,,,,,
+Lithonia,50.0,3.12,2.63,2.48,1.98,19.93,355000.0,Moderate Appreciation,2.37,3.02,Arv,,,,,,,,
+Ellenwood,9.0,2.66,2.62,0.23,2.26,3.05,363300.0,Moderate Appreciation,2.36,2.75,Arv,,,,,,,,
+Scottdale,7.0,4.37,2.52,5.19,1.76,16.11,480000.0,Lower Appreciation,2.27,2.9,Arv,,,,,,,,
+Acworth,15.0,,1.82,1.03,1.57,4.97,305000.0,,1.69,2.64,Cobb,,,,,,,,
+Austell,12.0,,1.77,0.48,1.51,2.96,180000.0,,1.69,2.17,Cobb,,,,,,,,
+Kennesaw,22.0,,2.02,0.66,1.57,4.69,299189.5,,1.82,2.45,Cobb,,,,,,,,
+Mableton,22.0,,2.15,0.64,1.62,3.99,288500.0,,1.99,2.54,Cobb,,,,,,,,
+Marietta,119.0,,2.34,0.62,1.55,4.64,335000.0,,2.07,2.7,Cobb,,,,,,,,
+Powder Springs,26.0,,2.09,0.66,1.56,4.4,227000.0,,1.74,2.46,Cobb,,,,,,,,
+Smyrna,36.0,,2.38,0.54,1.56,4.22,285500.0,,2.1,2.6,Cobb,,,,,,,,
+Alpharetta,,,,2.6151326306480094,,,,,,,Fulton,12.0,3.814583948711895,2.879386249091742,1.4707584291335545,9.70691382765531,1040000.0,2.4868253819198127,3.7379087379789833
+Fairburn,,,,0.4930198963175614,,,,,,,Fulton,9.0,2.829611583772655,2.6779483600837404,2.264353699723672,3.87323943661972,298000.0,2.5441696113074204,2.888742159128425

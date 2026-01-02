@@ -9,11 +9,30 @@ class FlipPropertyAnalyzer:
     def __init__(self, data_file='data/decatur_properties.csv'):
         self.data_file = data_file
         self.df = None
+        self.county_name = self._extract_county_name(data_file)
+
+    def _extract_county_name(self, file_path):
+        """Extract county name from file path for output naming"""
+        import os
+        filename = os.path.basename(file_path)
+        # Try to extract county name from filename
+        if 'decatur' in filename.lower():
+            return 'dekalb'
+        elif 'cobb' in filename.lower():
+            return 'cobb'
+        elif 'fulton' in filename.lower():
+            return 'fulton'
+        else:
+            return 'unknown'
 
     def load_data(self):
         """Load property data"""
         print(f"Loading data from {self.data_file}...")
-        self.df = pd.read_csv(self.data_file)
+        # Detect file type and use appropriate reader
+        if self.data_file.endswith('.xlsx') or self.data_file.endswith('.xls'):
+            self.df = pd.read_excel(self.data_file)
+        else:
+            self.df = pd.read_csv(self.data_file)
         print(f"Loaded {len(self.df)} properties\n")
         return self.df
 
@@ -228,7 +247,17 @@ class FlipPropertyAnalyzer:
         print("=" * 80)
 
 def main():
-    analyzer = FlipPropertyAnalyzer()
+    import sys
+
+    # Check for command-line argument
+    if len(sys.argv) > 1:
+        data_file = sys.argv[1]
+        print(f"Using custom data file: {data_file}")
+    else:
+        data_file = 'data/decatur_properties.csv'
+        print(f"Using default data file: {data_file}")
+
+    analyzer = FlipPropertyAnalyzer(data_file=data_file)
     analyzer.generate_report()
 
 if __name__ == "__main__":
