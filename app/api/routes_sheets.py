@@ -19,6 +19,7 @@ from app.models.property_models import (
 )
 from app.models.flip_calculator_models import FlipCalculatorInput
 from app.services.flip_calculator import calculate_flip_deal
+from app.services.zillow_api import ZillowAPIService
 
 router = APIRouter(prefix="/sheets", tags=["google-sheets"])
 
@@ -344,6 +345,9 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
             detail=f"Failed to read sheet data: {str(e)}"
         )
 
+    # Initialize Zillow API service
+    zillow = ZillowAPIService()
+
     # Process each row and calculate area-specific ARV
     successful = 0
     failed = 0
@@ -446,35 +450,73 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                         f"${flip_result.selling.buyer_commission:,.0f}",
                         f"${flip_result.recommended_arv_for_profit:,.0f}",
                     ]
+
+                    # Fetch Zestimate and create comparison columns
+                    try:
+                        address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else None
+                        print(f"  Fetching Zestimate for {address}, {city}")
+                        zestimate = zillow.get_zestimate(address, city, "GA") if address else None
+
+                        if zestimate:
+                            arv_needed = flip_result.recommended_arv_for_profit
+                            zest_vs_arv = zestimate - arv_needed
+                            zest_supports = "YES" if zestimate >= arv_needed else "NO"
+
+                            # Determine deal status
+                            if zestimate >= arv_needed * 1.05:  # 5% cushion
+                                deal_status = "GOOD DEAL"
+                            elif zestimate >= arv_needed:
+                                deal_status = "MAYBE"
+                            else:
+                                deal_status = "NO DEAL"
+
+                            zestimate_cols = [
+                                deal_status,
+                                f"${zestimate:,.0f}",
+                                f"${arv_needed:,.0f}",
+                                f"${zest_vs_arv:,.0f}",
+                                zest_supports
+                            ]
+                        else:
+                            print(f"  Zestimate not available")
+                            zestimate_cols = ["UNKNOWN", "Not Available", "", "", ""]
+                    except Exception as e:
+                        print(f"  Error fetching Zestimate: {e}")
+                        zestimate_cols = ["ERROR", "API Error", "", "", ""]
+
                 except Exception as e:
                     print(f"Error calculating flip for row {idx}: {e}")
-                    # Add empty flip columns if error (2 sqft + 30 flip = 32)
+                    # Add empty columns if error (5 zest + 2 sqft + 30 flip = 37)
+                    zestimate_cols = ["ERROR", "", "", "", ""]
                     flip_results = ["", "", "ERROR"] + [""] * 29
             else:
-                # No sqft data - add empty flip columns (2 sqft + 30 flip = 32)
+                # No sqft data - add empty columns (5 zest + 2 sqft + 30 flip = 37)
+                zestimate_cols = ["NO SQFT", "N/A", "N/A", "N/A", "N/A"]
                 flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 29
 
-            # Format output (32 flip columns only)
-            results_to_write.append(flip_results)
+            # Format output (5 zestimate + 2 sqft + 30 flip = 37 total)
+            results_to_write.append(zestimate_cols + flip_results)
 
         except Exception as e:
             failed += 1
-            # Add empty columns for failed rows (32 flip columns)
-            results_to_write.append(["ERROR", str(e)[:30]] + [""] * 30)
+            # Add empty columns for failed rows (5 zest + 2 sqft + 30 flip = 37)
+            results_to_write.append(["ERROR", str(e)[:30], "", "", ""] + [""] * 32)
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
     written_back = False
     if request.write_back and results_to_write:
         try:
-            # Write to columns X through AW (32 flip columns only)
+            # Write to columns X through BM (37 columns: 5 zest + 2 sqft + 30 flip)
             # First, add/update header row
             header_row_num = request.start_row - 1
             if header_row_num >= 1:
                 headers = [
-                    # Sqft info columns (X-Y)
+                    # Zestimate comparison columns (X-AB)
+                    'Deal_Status', 'Zestimate', 'ARV_Needed', 'Zestimate_vs_ARV_Needed', 'Zestimate_Supports_Deal',
+                    # Sqft info columns (AC-AD)
                     'Sqft_Used', 'Sqft_Source',
-                    # Flip calculator columns (Z-AW)
+                    # Flip calculator columns (AE-BM)
                     'Flip_Is_Profitable', 'Flip_Meets_20pct_ROI', 'Flip_Meets_70pct_Rule',
                     'Flip_ROI_Pct', 'Flip_Gross_Profit', 'Flip_Profit_Margin_Pct',
                     'Flip_Purchase_Price', 'Flip_ARV', 'Flip_Total_All_Costs', 'Flip_Cash_Needed', 'Flip_Max_Offer_70_Rule',
@@ -485,12 +527,12 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     'Flip_Staging', 'Flip_Closing_Costs_Sell', 'Flip_Seller_Credit',
                     'Flip_Listing_Commission', 'Flip_Buyer_Commission', 'Flip_Recommended_ARV'
                 ]
-                worksheet.update(f'X{header_row_num}:AW{header_row_num}', [headers])
+                worksheet.update(f'X{header_row_num}:BM{header_row_num}', [headers])
 
             # Write prediction results
             start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'AW{end_row}'
+            end_cell = f'BM{end_row}'
 
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)
             written_back = True
