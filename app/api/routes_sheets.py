@@ -225,7 +225,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
     ## Output Columns
 
-    Writes 26 columns to the sheet (columns X through AV):
+    Writes 25 columns to the sheet (columns X through AV):
 
     **Market Value Analysis (X-AC):**
     - **X: Deal Status** - GOOD DEAL, MAYBE, or NO DEAL (based on Rentcast Market Value vs ARV Needed)
@@ -489,7 +489,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     flip_result = calculate_flip_deal(flip_input)
                     print(f"DEBUG: Calculated flip for row {idx}, ROI: {flip_result.profit_analysis.roi_percent:.1f}%")
 
-                    # Format flip results (17 columns: 2 sqft + 15 flip)
+                    # Format flip results (16 columns: 2 sqft + 14 flip)
                     flip_results = [
                         # Sqft info (2 columns)
                         str(sqft),
@@ -591,7 +591,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     print(f"Error calculating flip for row {idx}: {e}")
                     # Add empty columns if error (9 value+comps + 2 sqft + 15 flip = 26)
                     value_cols = ["ERROR", "", "", "", "", "", "", "", ""]
-                    flip_results = ["", "", "ERROR"] + [""] * 14
+                    flip_results = ["", "", "ERROR"] + [""] * 13
             else:
                 # No sqft data - fetch from Rentcast if address available
                 if col_address is not None and col_address < len(row):
@@ -725,19 +725,19 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     except Exception as e:
                         print(f"  Error calculating flip after Rentcast sqft: {e}")
                         value_cols = ["ERROR", "", "", "", "", "", "", "", ""]
-                        flip_results = ["", "", "ERROR"] + [""] * 14
+                        flip_results = ["", "", "ERROR"] + [""] * 13
                 else:
-                    # Still no sqft - add empty columns (9 value+comps + 2 sqft + 15 flip = 26)
+                    # Still no sqft - add empty columns (9 value+comps + 16 flip_results = 25)
                     value_cols = ["NO SQFT", "N/A", "N/A", "N/A", "N/A", "N/A", "", "", ""]
-                    flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 14
+                    flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 13
 
-            # Format output (9 value+comps + 2 sqft + 15 flip = 26 total)
+            # Format output (9 value+comps + 16 flip_results = 25 total)
             results_to_write.append(value_cols + flip_results)
 
         except Exception as e:
             failed += 1
-            # Add empty columns for failed rows (9 value+comps + 2 sqft + 15 flip = 26)
-            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", "", ""] + [""] * 17)
+            # Add empty columns for failed rows (9 value+comps + 16 flip_results = 25)
+            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", "", ""] + [""] * 16)
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
@@ -748,7 +748,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     if request.write_back and results_to_write:
         try:
             print(f"DEBUG: Starting write operation to sheet...")
-            # Write to columns X through AV (26 columns: 6 value + 3 comps + 2 sqft + 15 flip)
+            # Write to columns X through AV (25 columns: 6 value + 3 comps + 2 sqft + 14 flip)
             # First, add/update header row
             header_row_num = request.start_row - 1
             if header_row_num >= 1:
