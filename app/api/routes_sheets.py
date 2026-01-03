@@ -19,7 +19,6 @@ from app.models.property_models import (
 )
 from app.models.flip_calculator_models import FlipCalculatorInput
 from app.services.flip_calculator import calculate_flip_deal
-from app.services.county_assessor_lookup import lookup_sqft_from_assessor
 
 router = APIRouter(prefix="/sheets", tags=["google-sheets"])
 
@@ -312,10 +311,8 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
         col_list_price = find_column(header_row, ['list price', 'price', 'mls amount', 'sale price'])
         col_dom = find_column(header_row, ['days on market', 'dom', 'days on mkt'])
         col_assessed = find_column(header_row, ['total assessed value', 'assessed value', 'tax assessed value'])
-        col_sqft = find_column(header_row, ['building sqft', 'sqft', 'square feet', 'sq ft', 'sqft living'])
+        col_sqft = find_column(header_row, ['building sqft', 'sqft', 'square feet', 'sq ft', 'sqft living', 'square footage'])
         col_address = find_column(header_row, ['address', 'street address', 'property address'])
-        col_county = find_column(header_row, ['county'])
-        col_parcel = find_column(header_row, ['apn', 'parcel number', 'parcel', 'parcel id'])
 
         # Verify we have required columns
         missing_cols = []
@@ -416,34 +413,12 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
             # Calculate flip deal if sqft available
             flip_results = []
-            sqft_source = ""
+            sqft_source = "Sheet"
 
-            # Try to get sqft from sheet first
+            # Get sqft from sheet
             sqft = 0
             if col_sqft is not None and col_sqft < len(row):
                 sqft = safe_int(row[col_sqft], 0)
-                if sqft > 0:
-                    sqft_source = "Sheet"
-
-            # If sqft missing, try county assessor lookup
-            if sqft == 0 and col_county is not None:
-                try:
-                    # Get address, county, and parcel for lookup
-                    address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else None
-                    county = str(row[col_county]).strip() if col_county < len(row) and row[col_county] else None
-                    parcel = str(row[col_parcel]).strip() if col_parcel is not None and col_parcel < len(row) and row[col_parcel] else None
-
-                    if address and county:
-                        print(f"  Attempting assessor lookup for {address}, {county} County")
-                        looked_up_sqft = lookup_sqft_from_assessor(address, city or "", county, parcel)
-                        if looked_up_sqft:
-                            sqft = looked_up_sqft
-                            sqft_source = f"Assessor ({county})"
-                            print(f"  ✓ Found sqft from assessor: {sqft}")
-                        else:
-                            print(f"  ✗ Assessor lookup returned no sqft")
-                except Exception as e:
-                    print(f"  Error in assessor lookup: {e}")
 
             # Now process flip calculator if we have sqft
             if sqft > 0:
@@ -511,7 +486,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     flip_results = ["", "", "ERROR"] + [""] * 29
             else:
                 # No sqft data - add empty flip columns (2 sqft + 30 flip = 32)
-                flip_results = ["0", "Not Found", "N/A - No Sqft"] + [""] * 29
+                flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 29
 
             # Format output (5 ARV columns + 32 flip columns = 37 total)
             results_to_write.append([
