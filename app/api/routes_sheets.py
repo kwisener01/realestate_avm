@@ -225,7 +225,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
     ## Output Columns
 
-    Writes 41 columns to the sheet (columns X through BQ):
+    Writes 40 columns to the sheet (columns X through BP):
 
     **Market Value Analysis (X-AC):**
     - **X: Deal Status** - GOOD DEAL, MAYBE, or NO DEAL (based on Rentcast Market Value vs ARV Needed)
@@ -242,13 +242,13 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     - **AG: Sqft Used** - Square footage used for calculations
     - **AH: Sqft Source** - Source of sqft data (Sheet or Rentcast)
 
-    **Flip Calculator Analysis (AI-BQ) - Uses $45/sqft for repairs:**
+    **Flip Calculator Analysis (AI-BP) - Uses $45/sqft for repairs:**
     - **AI-AK**: Quick indicators (Profitable, Meets 20% ROI, Meets 70% Rule)
     - **AL-AN**: Key metrics (ROI %, Gross Profit, Profit Margin %)
-    - **AO-AS**: Core numbers (Purchase, ARV, Total Costs, Cash Needed, Max Offer)
-    - **AT-AW**: Cost summaries (Acquisition, Renovation, Holding, Selling)
-    - **AX-BP**: Detailed breakdowns (Repairs, Loan costs, Commissions, etc.)
-    - **BQ**: Recommended ARV for profitability
+    - **AO-AR**: Core numbers (Purchase, Total Costs, Cash Needed, Max Offer)
+    - **AS-AV**: Cost summaries (Acquisition, Renovation, Holding, Selling)
+    - **AW-BO**: Detailed breakdowns (Repairs, Loan costs, Commissions, etc.)
+    - **BP**: Recommended ARV for profitability
 
     ## Deal Quality Determination
 
@@ -447,7 +447,6 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                         f"{flip_result.profit_analysis.profit_margin_percent:.1f}%",
                         # Key numbers
                         f"${flip_result.acquisition.purchase_price:,.0f}",
-                        f"${flip_result.arv:,.0f}",
                         f"${flip_result.profit_analysis.total_all_costs:,.0f}",
                         f"${flip_result.profit_analysis.cash_needed:,.0f}",
                         f"${flip_result.max_offer_70_rule:,.0f}",
@@ -549,9 +548,9 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
                 except Exception as e:
                     print(f"Error calculating flip for row {idx}: {e}")
-                    # Add empty columns if error (9 value+comps + 2 sqft + 30 flip = 41)
+                    # Add empty columns if error (9 value+comps + 2 sqft + 29 flip = 40)
                     value_cols = ["ERROR", "", "", "", "", "", "", "", ""]
-                    flip_results = ["", "", "ERROR"] + [""] * 29
+                    flip_results = ["", "", "ERROR"] + [""] * 28
             else:
                 # No sqft data - fetch from Rentcast if address available
                 if col_address is not None and col_address < len(row):
@@ -595,7 +594,6 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                             f"${flip_result.profit_analysis.gross_profit:,.0f}",
                             f"{flip_result.profit_analysis.profit_margin_percent:.1f}%",
                             f"${flip_result.acquisition.purchase_price:,.0f}",
-                            f"${flip_result.arv:,.0f}",
                             f"${flip_result.profit_analysis.total_all_costs:,.0f}",
                             f"${flip_result.profit_analysis.cash_needed:,.0f}",
                             f"${flip_result.max_offer_70_rule:,.0f}",
@@ -682,26 +680,26 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     except Exception as e:
                         print(f"  Error calculating flip after Rentcast sqft: {e}")
                         value_cols = ["ERROR", "", "", "", "", "", "", "", ""]
-                        flip_results = ["", "", "ERROR"] + [""] * 29
+                        flip_results = ["", "", "ERROR"] + [""] * 28
                 else:
-                    # Still no sqft - add empty columns (9 value+comps + 2 sqft + 30 flip = 41)
+                    # Still no sqft - add empty columns (9 value+comps + 2 sqft + 29 flip = 40)
                     value_cols = ["NO SQFT", "N/A", "N/A", "N/A", "N/A", "N/A", "", "", ""]
-                    flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 29
+                    flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 28
 
-            # Format output (9 value+comps + 2 sqft + 30 flip = 41 total)
+            # Format output (9 value+comps + 2 sqft + 29 flip = 40 total)
             results_to_write.append(value_cols + flip_results)
 
         except Exception as e:
             failed += 1
-            # Add empty columns for failed rows (9 value+comps + 2 sqft + 30 flip = 41)
-            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", "", ""] + [""] * 32)
+            # Add empty columns for failed rows (9 value+comps + 2 sqft + 29 flip = 40)
+            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", "", ""] + [""] * 31)
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
     written_back = False
     if request.write_back and results_to_write:
         try:
-            # Write to columns X through BQ (41 columns: 6 value + 3 comps + 2 sqft + 30 flip)
+            # Write to columns X through BP (40 columns: 6 value + 3 comps + 2 sqft + 29 flip)
             # First, add/update header row
             header_row_num = request.start_row - 1
             if header_row_num >= 1:
@@ -712,10 +710,10 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     'Comp_1', 'Comp_2', 'Comp_3',
                     # Sqft info columns (AG-AH)
                     'Sqft_Used', 'Sqft_Source',
-                    # Flip calculator columns (AI-BN)
+                    # Flip calculator columns (AI-BM)
                     'Flip_Is_Profitable', 'Flip_Meets_20pct_ROI', 'Flip_Meets_70pct_Rule',
                     'Flip_ROI_Pct', 'Flip_Gross_Profit', 'Flip_Profit_Margin_Pct',
-                    'Flip_Purchase_Price', 'Flip_ARV', 'Flip_Total_All_Costs', 'Flip_Cash_Needed', 'Flip_Max_Offer_70_Rule',
+                    'Flip_Purchase_Price', 'Flip_Total_All_Costs', 'Flip_Cash_Needed', 'Flip_Max_Offer_70_Rule',
                     'Flip_Total_Acquisition', 'Flip_Total_Renovation', 'Flip_Total_Holding', 'Flip_Total_Selling',
                     'Flip_Repair_Cost', 'Flip_Closing_Costs_Buy', 'Flip_Monthly_Maintenance',
                     'Flip_Loan_Amount', 'Flip_Interest_Payment', 'Flip_Loan_Points',
@@ -723,12 +721,12 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     'Flip_Staging', 'Flip_Closing_Costs_Sell', 'Flip_Seller_Credit',
                     'Flip_Listing_Commission', 'Flip_Buyer_Commission', 'Flip_Recommended_ARV'
                 ]
-                worksheet.update(f'X{header_row_num}:BQ{header_row_num}', [headers])
+                worksheet.update(f'X{header_row_num}:BP{header_row_num}', [headers])
 
             # Write prediction results
             start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'BQ{end_row}'
+            end_cell = f'BP{end_row}'
 
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)
             written_back = True
