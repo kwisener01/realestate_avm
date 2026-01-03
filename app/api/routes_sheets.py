@@ -178,9 +178,13 @@ def clean_price(val):
 
 
 def safe_int(val, default=0):
-    """Safely convert to int"""
+    """Safely convert to int, handling commas"""
     try:
-        return int(float(val)) if val and str(val).strip() else default
+        if not val or not str(val).strip():
+            return default
+        # Remove commas before converting
+        clean_val = str(val).strip().replace(',', '')
+        return int(float(clean_val))
     except:
         return default
 
