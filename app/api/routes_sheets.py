@@ -366,22 +366,24 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
     # Extract custom parameters or use defaults
     params = request.parameters
+    print(f"DEBUG: Parameters received: {params}")
+
     if params:
-        repair_cost_per_sqft = params.repair_cost_per_sqft or 45
-        hold_time_months = params.hold_time_months or 5
-        interest_rate = params.interest_rate_annual or 0.10
-        loan_points = params.loan_points or 0.01
-        loan_to_cost = params.loan_to_cost_ratio or 0.90
-        monthly_hoa = params.monthly_hoa_maintenance or 150
-        monthly_insurance = params.monthly_insurance or 100
-        monthly_utilities = params.monthly_utilities or 150
-        property_tax_rate = params.property_tax_rate_annual or 0.012
-        closing_buy_pct = params.closing_costs_buy_percent or 0.01
-        closing_sell_pct = params.closing_costs_sell_percent or 0.01
-        seller_credit_pct = params.seller_credit_percent or 0.03
-        staging_cost = params.staging_marketing or 2000
-        listing_commission = params.listing_commission_rate or 0.01
-        buyer_commission = params.buyer_commission_rate or 0.025
+        repair_cost_per_sqft = params.repair_cost_per_sqft if params.repair_cost_per_sqft is not None else 45
+        hold_time_months = params.hold_time_months if params.hold_time_months is not None else 5
+        interest_rate = params.interest_rate_annual if params.interest_rate_annual is not None else 0.10
+        loan_points = params.loan_points if params.loan_points is not None else 0.01
+        loan_to_cost = params.loan_to_cost_ratio if params.loan_to_cost_ratio is not None else 0.90
+        monthly_hoa = params.monthly_hoa_maintenance if params.monthly_hoa_maintenance is not None else 150
+        monthly_insurance = params.monthly_insurance if params.monthly_insurance is not None else 100
+        monthly_utilities = params.monthly_utilities if params.monthly_utilities is not None else 150
+        property_tax_rate = params.property_tax_rate_annual if params.property_tax_rate_annual is not None else 0.012
+        closing_buy_pct = params.closing_costs_buy_percent if params.closing_costs_buy_percent is not None else 0.01
+        closing_sell_pct = params.closing_costs_sell_percent if params.closing_costs_sell_percent is not None else 0.01
+        seller_credit_pct = params.seller_credit_percent if params.seller_credit_percent is not None else 0.03
+        staging_cost = params.staging_marketing if params.staging_marketing is not None else 2000
+        listing_commission = params.listing_commission_rate if params.listing_commission_rate is not None else 0.01
+        buyer_commission = params.buyer_commission_rate if params.buyer_commission_rate is not None else 0.025
     else:
         # Use all defaults
         repair_cost_per_sqft = 45
@@ -399,6 +401,8 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
         staging_cost = 2000
         listing_commission = 0.01
         buyer_commission = 0.025
+
+    print(f"DEBUG: Using parameters - repair_cost: {repair_cost_per_sqft}, hold_time: {hold_time_months}")
 
     # Process each row and calculate area-specific ARV
     successful = 0
@@ -483,6 +487,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
                     # Calculate flip deal
                     flip_result = calculate_flip_deal(flip_input)
+                    print(f"DEBUG: Calculated flip for row {idx}, ROI: {flip_result.profit_analysis.roi_percent:.1f}%")
 
                     # Format flip results (17 columns: 2 sqft + 15 flip)
                     flip_results = [
@@ -737,8 +742,12 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
     # Write results back to sheet if requested
     written_back = False
+    print(f"DEBUG: write_back={request.write_back}, results_to_write length={len(results_to_write)}")
+    print(f"DEBUG: First result row (if any): {results_to_write[0] if results_to_write else 'None'}")
+
     if request.write_back and results_to_write:
         try:
+            print(f"DEBUG: Starting write operation to sheet...")
             # Write to columns X through AV (26 columns: 6 value + 3 comps + 2 sqft + 15 flip)
             # First, add/update header row
             header_row_num = request.start_row - 1
@@ -756,6 +765,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     'Flip_Purchase_Price', 'Flip_Total_All_Costs', 'Flip_Cash_Needed', 'Flip_Max_Offer_70_Rule',
                     'Flip_Total_Acquisition', 'Flip_Total_Renovation', 'Flip_Total_Holding', 'Flip_Total_Selling'
                 ]
+                print(f"DEBUG: Writing headers to row {header_row_num}")
                 worksheet.update(f'X{header_row_num}:AV{header_row_num}', [headers])
 
             # Write prediction results
@@ -763,11 +773,15 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
             end_row = request.start_row + len(results_to_write) - 1
             end_cell = f'AV{end_row}'
 
+            print(f"DEBUG: Writing {len(results_to_write)} rows from {start_cell} to {end_cell}")
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)
             written_back = True
+            print(f"DEBUG: Write operation completed successfully!")
 
         except Exception as e:
             print(f"Failed to write results back to sheet: {e}")
+            import traceback
+            traceback.print_exc()
             # Don't fail the request if write-back fails
 
     return GoogleSheetsResponse(
