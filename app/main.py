@@ -14,7 +14,7 @@ from datetime import datetime
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.api import routes_predict, routes_properties, routes_sheets
+from app.api import routes_predict, routes_properties, routes_sheets, routes_flip_calculator
 from app.models.property_models import HealthCheck
 from ml.stacker import StackerModel
 
@@ -101,6 +101,7 @@ app.add_middleware(
 app.include_router(routes_predict.router)
 app.include_router(routes_properties.router)
 app.include_router(routes_sheets.router)
+app.include_router(routes_flip_calculator.router)
 
 # Mount static files
 static_dir = os.path.join(os.path.dirname(__file__), "static")

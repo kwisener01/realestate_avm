@@ -17,6 +17,8 @@ from app.models.property_models import (
     GoogleSheetsRequest,
     GoogleSheetsResponse,
 )
+from app.models.flip_calculator_models import FlipCalculatorInput
+from app.services.flip_calculator import calculate_flip_deal
 
 router = APIRouter(prefix="/sheets", tags=["google-sheets"])
 
@@ -218,12 +220,22 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
     ## Output Columns
 
-    Writes 5 columns to the sheet (columns X, Y, Z, AA, AB):
+    Writes 35 columns to the sheet (columns X through BK):
+
+    **ARV Analysis (X-AB):**
     - **X: Deal Status** - GOOD DEAL, MAYBE, or NO DEAL
     - **Y: ARV (Conservative)** - Conservative ARV estimate (25th percentile)
     - **Z: ARV (Moderate)** - Recommended ARV estimate (median)
     - **AA: ARV (Aggressive)** - Optimistic ARV estimate (75th percentile)
     - **AB: Confidence** - HIGH, MEDIUM, or LOW based on data source
+
+    **Flip Calculator Analysis (AC-BK) - Uses $45/sqft for repairs:**
+    - **AC-AE**: Quick indicators (Profitable, Meets 20% ROI, Meets 70% Rule)
+    - **AF-AH**: Key metrics (ROI %, Gross Profit, Profit Margin %)
+    - **AI-AM**: Core numbers (Purchase, ARV, Total Costs, Cash Needed, Max Offer)
+    - **AN-AQ**: Cost summaries (Acquisition, Renovation, Holding, Selling)
+    - **AR-BY**: Detailed breakdowns (Repairs, Loan costs, Commissions, etc.)
+    - **BK**: Recommended ARV for profitability
 
     ## ARV Calculation
 
@@ -299,6 +311,8 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
         col_list_price = find_column(header_row, ['list price', 'price', 'mls amount', 'sale price'])
         col_dom = find_column(header_row, ['days on market', 'dom', 'days on mkt'])
         col_assessed = find_column(header_row, ['total assessed value', 'assessed value', 'tax assessed value'])
+        col_sqft = find_column(header_row, ['building sqft', 'sqft', 'square feet', 'sq ft', 'sqft living'])
+        col_address = find_column(header_row, ['address', 'street address', 'property address'])
 
         # Verify we have required columns
         missing_cols = []
@@ -397,35 +411,120 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
             successful += 1
 
-            # Format output (5 columns)
+            # Calculate flip deal if sqft available
+            flip_results = []
+            if col_sqft is not None and col_sqft < len(row):
+                sqft = safe_int(row[col_sqft], 0)
+                if sqft > 0:
+                    try:
+                        # Get address if available
+                        address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else "Property"
+
+                        # Create flip calculator input
+                        flip_input = FlipCalculatorInput(
+                            property_address=address,
+                            city=city or "",
+                            zip_code=zipcode or "00000",
+                            sqft_living=sqft,
+                            purchase_price=list_price,
+                            arv=arv_moderate,  # Use moderate ARV
+                            hold_time_months=5
+                        )
+
+                        # Calculate flip deal
+                        flip_result = calculate_flip_deal(flip_input)
+
+                        # Format flip results (30 columns)
+                        flip_results = [
+                            # Quick indicators
+                            "YES" if flip_result.profit_analysis.is_profitable else "NO",
+                            "YES" if flip_result.profit_analysis.meets_minimum_roi else "NO",
+                            "YES" if flip_result.profit_analysis.meets_70_percent_rule else "NO",
+                            f"{flip_result.profit_analysis.roi_percent:.1f}%",
+                            f"${flip_result.profit_analysis.gross_profit:,.0f}",
+                            f"{flip_result.profit_analysis.profit_margin_percent:.1f}%",
+                            # Key numbers
+                            f"${flip_result.acquisition.purchase_price:,.0f}",
+                            f"${flip_result.arv:,.0f}",
+                            f"${flip_result.profit_analysis.total_all_costs:,.0f}",
+                            f"${flip_result.profit_analysis.cash_needed:,.0f}",
+                            f"${flip_result.max_offer_70_rule:,.0f}",
+                            # Cost breakdowns
+                            f"${flip_result.acquisition.total_acquisition:,.0f}",
+                            f"${flip_result.renovation.total_renovation:,.0f}",
+                            f"${flip_result.holding.total_holding:,.0f}",
+                            f"${flip_result.selling.total_selling:,.0f}",
+                            # Detailed costs
+                            f"${flip_result.renovation.repair_cost:,.0f}",
+                            f"${flip_result.acquisition.closing_costs:,.0f}",
+                            f"${flip_result.renovation.monthly_maintenance_total:,.0f}",
+                            f"${flip_result.holding.loan_amount:,.0f}",
+                            f"${flip_result.holding.interest_payment:,.0f}",
+                            f"${flip_result.holding.loan_origination_points:,.0f}",
+                            f"${flip_result.holding.property_tax_prorated:,.0f}",
+                            f"${flip_result.holding.insurance_total:,.0f}",
+                            f"${flip_result.holding.utilities_total:,.0f}",
+                            f"${flip_result.selling.staging_marketing:,.0f}",
+                            f"${flip_result.selling.closing_costs:,.0f}",
+                            f"${flip_result.selling.seller_credit:,.0f}",
+                            f"${flip_result.selling.listing_commission:,.0f}",
+                            f"${flip_result.selling.buyer_commission:,.0f}",
+                            f"${flip_result.recommended_arv_for_profit:,.0f}",
+                        ]
+                    except Exception as e:
+                        print(f"Error calculating flip for row {idx}: {e}")
+                        # Add empty flip columns if error
+                        flip_results = ["ERROR"] + [""] * 29
+                else:
+                    # No sqft data - add empty flip columns
+                    flip_results = ["N/A - No Sqft"] + [""] * 29
+            else:
+                # No sqft column - add empty flip columns
+                flip_results = ["N/A - No Sqft"] + [""] * 29
+
+            # Format output (5 ARV columns + 30 flip columns = 35 total)
             results_to_write.append([
                 deal_status,
                 f"${arv_conservative:,.0f}",
                 f"${arv_moderate:,.0f}",
                 f"${arv_aggressive:,.0f}",
                 confidence
-            ])
+            ] + flip_results)
 
         except Exception as e:
             failed += 1
-            results_to_write.append(["ERROR", str(e)[:30], "", "", ""])
+            # Add empty columns for failed rows (5 ARV + 30 flip = 35 total)
+            results_to_write.append(["ERROR", str(e)[:30], "", "", ""] + [""] * 30)
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
     written_back = False
     if request.write_back and results_to_write:
         try:
-            # Write to columns X, Y, Z, AA, AB (24, 25, 26, 27, 28)
+            # Write to columns X through BK (35 columns total: 5 ARV + 30 flip)
             # First, add/update header row
             header_row_num = request.start_row - 1
             if header_row_num >= 1:
-                worksheet.update(f'X{header_row_num}:AB{header_row_num}',
-                               [['Deal Status', 'ARV (Conservative)', 'ARV (Moderate)', 'ARV (Aggressive)', 'Confidence']])
+                headers = [
+                    # ARV columns (X-AB)
+                    'Deal Status', 'ARV (Conservative)', 'ARV (Moderate)', 'ARV (Aggressive)', 'Confidence',
+                    # Flip calculator columns (AC-BK)
+                    'Flip_Is_Profitable', 'Flip_Meets_20pct_ROI', 'Flip_Meets_70pct_Rule',
+                    'Flip_ROI_Pct', 'Flip_Gross_Profit', 'Flip_Profit_Margin_Pct',
+                    'Flip_Purchase_Price', 'Flip_ARV', 'Flip_Total_All_Costs', 'Flip_Cash_Needed', 'Flip_Max_Offer_70_Rule',
+                    'Flip_Total_Acquisition', 'Flip_Total_Renovation', 'Flip_Total_Holding', 'Flip_Total_Selling',
+                    'Flip_Repair_Cost', 'Flip_Closing_Costs_Buy', 'Flip_Monthly_Maintenance',
+                    'Flip_Loan_Amount', 'Flip_Interest_Payment', 'Flip_Loan_Points',
+                    'Flip_Property_Tax', 'Flip_Insurance', 'Flip_Utilities',
+                    'Flip_Staging', 'Flip_Closing_Costs_Sell', 'Flip_Seller_Credit',
+                    'Flip_Listing_Commission', 'Flip_Buyer_Commission', 'Flip_Recommended_ARV'
+                ]
+                worksheet.update(f'X{header_row_num}:BK{header_row_num}', [headers])
 
             # Write prediction results
             start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'AB{end_row}'
+            end_cell = f'BK{end_row}'
 
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)
             written_back = True

@@ -1,6 +1,10 @@
 import pandas as pd
 import numpy as np
 
+# Constants
+REPAIR_COST_PER_SQFT = 45  # Standard repair cost assumption
+REPAIR_COST_PERCENTAGE_FALLBACK = 0.15  # Fallback to 15% if sqft not available
+
 class ListingARVCalculator:
     """Apply area-specific ARV multiples to MLS listings"""
 
@@ -139,9 +143,30 @@ class ListingARVCalculator:
         results_df = pd.DataFrame(results)
         df_output = pd.concat([df_clean, results_df], axis=1)
 
-        # Calculate potential profit (ARV - List Price - estimated rehab)
-        # Assume 15% of list price as average rehab cost
-        df_output['Est_Rehab_Cost'] = df_output['List_Price_Clean'] * 0.15
+        # Calculate estimated rehab cost
+        # Try to use square footage if available
+        sqft_columns = ['sqft_living', 'Building Sqft', 'Sqft', 'Living Area', 'Square Feet']
+        sqft_col_found = None
+
+        for col in sqft_columns:
+            if col in df_output.columns:
+                sqft_col_found = col
+                print(f"Using '{col}' for repair cost calculation at ${REPAIR_COST_PER_SQFT}/sqft")
+                break
+
+        if sqft_col_found:
+            # Use square footage based calculation
+            df_output['Sqft_Clean'] = pd.to_numeric(df_output[sqft_col_found], errors='coerce')
+            df_output['Est_Rehab_Cost'] = df_output['Sqft_Clean'] * REPAIR_COST_PER_SQFT
+            # If sqft is missing for some properties, fall back to percentage method
+            mask_missing_sqft = df_output['Sqft_Clean'].isna()
+            df_output.loc[mask_missing_sqft, 'Est_Rehab_Cost'] = df_output.loc[mask_missing_sqft, 'List_Price_Clean'] * REPAIR_COST_PERCENTAGE_FALLBACK
+            print(f"Properties with sqft data: {(~mask_missing_sqft).sum()}, using fallback: {mask_missing_sqft.sum()}")
+        else:
+            # Fall back to percentage of list price
+            print(f"No square footage data found. Using {REPAIR_COST_PERCENTAGE_FALLBACK*100}% of list price as fallback")
+            df_output['Est_Rehab_Cost'] = df_output['List_Price_Clean'] * REPAIR_COST_PERCENTAGE_FALLBACK
+
         df_output['Potential_Profit_Conservative'] = df_output['ARV_Conservative'] - df_output['List_Price_Clean'] - df_output['Est_Rehab_Cost']
         df_output['Potential_Profit_Moderate'] = df_output['ARV_Moderate'] - df_output['List_Price_Clean'] - df_output['Est_Rehab_Cost']
         df_output['Potential_Profit_Aggressive'] = df_output['ARV_Aggressive'] - df_output['List_Price_Clean'] - df_output['Est_Rehab_Cost']

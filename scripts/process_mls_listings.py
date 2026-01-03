@@ -87,7 +87,7 @@ Multiples Used:
   - ARV_Sample_Size: Number of properties used to calculate the multiple
 
 Profit Analysis:
-  - Est_Rehab_Cost: Estimated rehab (15% of purchase price)
+  - Est_Rehab_Cost: Estimated rehab ($45/sqft, or 15% of price if sqft unavailable)
   - Potential_Profit_[Conservative/Moderate/Aggressive]: ARV - Purchase - Rehab
   - ROI_[Conservative/Moderate/Aggressive]: Return on investment %
   - Is_Good_Deal: True if moderate ROI > 20%
