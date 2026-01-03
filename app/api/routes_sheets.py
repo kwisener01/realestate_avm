@@ -225,39 +225,51 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
     ## Output Columns
 
-    Writes 35 columns to the sheet (columns X through BK):
+    Writes 41 columns to the sheet (columns X through BQ):
 
-    **ARV Analysis (X-AB):**
-    - **X: Deal Status** - GOOD DEAL, MAYBE, or NO DEAL
-    - **Y: ARV (Conservative)** - Conservative ARV estimate (25th percentile)
-    - **Z: ARV (Moderate)** - Recommended ARV estimate (median)
-    - **AA: ARV (Aggressive)** - Optimistic ARV estimate (75th percentile)
-    - **AB: Confidence** - HIGH, MEDIUM, or LOW based on data source
+    **Market Value Analysis (X-AC):**
+    - **X: Deal Status** - GOOD DEAL, MAYBE, or NO DEAL (based on Rentcast Market Value vs ARV Needed)
+    - **Y: Market Value** - Rentcast property valuation
+    - **Z: ARV Needed** - After Repair Value needed for 20% ROI
+    - **AA: Market Value vs ARV** - Difference between market value and ARV needed
+    - **AB: Market Supports Deal** - YES/NO if market value supports the deal
+    - **AC: Maximum Allowable Offer** - 50% of ARV Needed (MAO = ARV × 0.50)
 
-    **Flip Calculator Analysis (AC-BK) - Uses $45/sqft for repairs:**
-    - **AC-AE**: Quick indicators (Profitable, Meets 20% ROI, Meets 70% Rule)
-    - **AF-AH**: Key metrics (ROI %, Gross Profit, Profit Margin %)
-    - **AI-AM**: Core numbers (Purchase, ARV, Total Costs, Cash Needed, Max Offer)
-    - **AN-AQ**: Cost summaries (Acquisition, Renovation, Holding, Selling)
-    - **AR-BY**: Detailed breakdowns (Repairs, Loan costs, Commissions, etc.)
-    - **BK**: Recommended ARV for profitability
+    **Comparable Properties (AD-AF) - Only for GOOD DEAL:**
+    - **AD-AF**: Top 3 comparable sales from Rentcast (Address | Price | Date | Beds/Baths | Sqft)
 
-    ## ARV Calculation
+    **Square Footage Info (AG-AH):**
+    - **AG: Sqft Used** - Square footage used for calculations
+    - **AH: Sqft Source** - Source of sqft data (Sheet or Rentcast)
 
-    Uses area-specific multiples derived from 598 actual flip transactions:
-    - Zip code level: Most accurate (if available)
-    - City level: Fallback if zip not found
-    - Default: Overall market average (2.82x)
+    **Flip Calculator Analysis (AI-BQ) - Uses $45/sqft for repairs:**
+    - **AI-AK**: Quick indicators (Profitable, Meets 20% ROI, Meets 70% Rule)
+    - **AL-AN**: Key metrics (ROI %, Gross Profit, Profit Margin %)
+    - **AO-AS**: Core numbers (Purchase, ARV, Total Costs, Cash Needed, Max Offer)
+    - **AT-AW**: Cost summaries (Acquisition, Renovation, Holding, Selling)
+    - **AX-BP**: Detailed breakdowns (Repairs, Loan costs, Commissions, etc.)
+    - **BQ**: Recommended ARV for profitability
 
-    Formula: ARV = Assessed Value × Area Multiple
+    ## Deal Quality Determination
 
-    If assessed value not available, estimates as 35% of list price.
+    Deal quality is determined by comparing Rentcast Market Value against the calculated ARV Needed:
 
-    ## Deal Criteria
+    - **GOOD DEAL**: Market Value ≥ ARV Needed × 1.05 (5% cushion for profit)
+    - **MAYBE**: Market Value ≥ ARV Needed (breakeven or minimal profit)
+    - **NO DEAL**: Market Value < ARV Needed (insufficient value to support flip)
 
-    - **GOOD DEAL**: List price ≤ 50% of moderate ARV
-    - **MAYBE**: List price ≤ 60% of moderate ARV
-    - **NO DEAL**: List price > 60% of moderate ARV
+    ## Maximum Allowable Offer (MAO)
+
+    MAO is calculated as 50% of the ARV Needed, providing a conservative entry point:
+    - Formula: MAO = ARV Needed × 0.50
+    - This ensures sufficient margin for repairs, holding costs, and profit
+    - Adjust offer based on property condition and market dynamics
+
+    ## Square Footage Handling
+
+    - **Sheet Data**: Uses Building Sqft column when available
+    - **Rentcast Fallback**: Automatically fetches sqft from Rentcast API if missing
+    - **Source Tracking**: Sqft_Source column shows data origin (Sheet or Rentcast)
 
     ## Authentication
 
@@ -472,6 +484,9 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                             else:
                                 deal_status = "NO DEAL"
 
+                            # Calculate Maximum Allowable Offer (MAO)
+                            mao = arv_needed * 0.50
+
                             # Fetch comps for GOOD DEAL properties
                             comp_cols = ["", "", ""]  # Default: 3 empty comp columns
                             if deal_status == "GOOD DEAL":
@@ -499,50 +514,170 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                                 f"${market_value:,.0f}",
                                 f"${arv_needed:,.0f}",
                                 f"${value_vs_arv:,.0f}",
-                                value_supports
+                                value_supports,
+                                f"${mao:,.0f}"
                             ] + comp_cols
                         else:
                             print(f"  Rentcast value not available")
-                            value_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A", "", "", ""]
+                            mao = arv_needed * 0.50
+                            value_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
                     except Exception as e:
                         print(f"  Error fetching Rentcast value: {e}")
-                        value_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A", "", "", ""]
+                        mao = arv_needed * 0.50 if arv_needed else 0
+                        value_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
 
                 except Exception as e:
                     print(f"Error calculating flip for row {idx}: {e}")
-                    # Add empty columns if error (8 value+comps + 2 sqft + 30 flip = 40)
-                    value_cols = ["ERROR", "", "", "", "", "", "", ""]
+                    # Add empty columns if error (9 value+comps + 2 sqft + 30 flip = 41)
+                    value_cols = ["ERROR", "", "", "", "", "", "", "", ""]
                     flip_results = ["", "", "ERROR"] + [""] * 29
             else:
-                # No sqft data - add empty columns (8 value+comps + 2 sqft + 30 flip = 40)
-                value_cols = ["NO SQFT", "N/A", "N/A", "N/A", "N/A", "", "", ""]
-                flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 29
+                # No sqft data - fetch from Rentcast if address available
+                if col_address is not None and col_address < len(row):
+                    address = str(row[col_address]).strip()
+                    if address:
+                        try:
+                            print(f"  Fetching sqft from Rentcast for {address}")
+                            property_data = rentcast.get_property_data(address, city, "GA", zipcode)
+                            if property_data and 'squareFootage' in property_data:
+                                sqft = int(property_data['squareFootage'])
+                                sqft_source = "Rentcast"
+                                print(f"  Retrieved sqft from Rentcast: {sqft}")
+                        except Exception as e:
+                            print(f"  Error fetching sqft from Rentcast: {e}")
 
-            # Format output (8 value+comps + 2 sqft + 30 flip = 40 total)
+                # If we got sqft from Rentcast, recalculate flip
+                if sqft > 0 and sqft_source == "Rentcast":
+                    try:
+                        flip_input = FlipCalculatorInput(
+                            property_address=address,
+                            city=city or "",
+                            zip_code=zipcode or "00000",
+                            sqft_living=sqft,
+                            purchase_price=list_price,
+                            arv=list_price,
+                            hold_time_months=5
+                        )
+                        flip_result = calculate_flip_deal(flip_input)
+
+                        flip_results = [
+                            str(sqft),
+                            sqft_source,
+                            "YES" if flip_result.profit_analysis.is_profitable else "NO",
+                            "YES" if flip_result.profit_analysis.meets_minimum_roi else "NO",
+                            "YES" if flip_result.profit_analysis.meets_70_percent_rule else "NO",
+                            f"{flip_result.profit_analysis.roi_percent:.1f}%",
+                            f"${flip_result.profit_analysis.gross_profit:,.0f}",
+                            f"{flip_result.profit_analysis.profit_margin_percent:.1f}%",
+                            f"${flip_result.acquisition.purchase_price:,.0f}",
+                            f"${flip_result.arv:,.0f}",
+                            f"${flip_result.profit_analysis.total_all_costs:,.0f}",
+                            f"${flip_result.profit_analysis.cash_needed:,.0f}",
+                            f"${flip_result.max_offer_70_rule:,.0f}",
+                            f"${flip_result.acquisition.total_acquisition:,.0f}",
+                            f"${flip_result.renovation.total_renovation:,.0f}",
+                            f"${flip_result.holding.total_holding:,.0f}",
+                            f"${flip_result.selling.total_selling:,.0f}",
+                            f"${flip_result.renovation.repair_cost:,.0f}",
+                            f"${flip_result.acquisition.closing_costs:,.0f}",
+                            f"${flip_result.renovation.monthly_maintenance_total:,.0f}",
+                            f"${flip_result.holding.loan_amount:,.0f}",
+                            f"${flip_result.holding.interest_payment:,.0f}",
+                            f"${flip_result.holding.loan_origination_points:,.0f}",
+                            f"${flip_result.holding.property_tax_prorated:,.0f}",
+                            f"${flip_result.holding.insurance_total:,.0f}",
+                            f"${flip_result.holding.utilities_total:,.0f}",
+                            f"${flip_result.selling.staging_marketing:,.0f}",
+                            f"${flip_result.selling.closing_costs:,.0f}",
+                            f"${flip_result.selling.seller_credit:,.0f}",
+                            f"${flip_result.selling.listing_commission:,.0f}",
+                            f"${flip_result.selling.buyer_commission:,.0f}",
+                            f"${flip_result.recommended_arv_for_profit:,.0f}",
+                        ]
+
+                        # Get Rentcast value and comps
+                        arv_needed = flip_result.recommended_arv_for_profit
+                        try:
+                            market_value = rentcast.get_value_estimate(address, city, "GA", zipcode)
+                            if market_value:
+                                value_vs_arv = market_value - arv_needed
+                                value_supports = "YES" if market_value >= arv_needed else "NO"
+
+                                if market_value >= arv_needed * 1.05:
+                                    deal_status = "GOOD DEAL"
+                                elif market_value >= arv_needed:
+                                    deal_status = "MAYBE"
+                                else:
+                                    deal_status = "NO DEAL"
+
+                                mao = arv_needed * 0.50
+
+                                comp_cols = ["", "", ""]
+                                if deal_status == "GOOD DEAL":
+                                    try:
+                                        property_data = rentcast.get_property_data(address, city, "GA", zipcode)
+                                        if property_data and 'comparables' in property_data:
+                                            comps = property_data['comparables'][:3]
+                                            for i, comp in enumerate(comps):
+                                                comp_address = comp.get('formattedAddress', comp.get('addressLine1', 'N/A'))
+                                                comp_price = comp.get('price', 0)
+                                                comp_date = comp.get('lastSeenDate', comp.get('listedDate', 'N/A'))
+                                                comp_sqft = comp.get('squareFootage', 'N/A')
+                                                comp_beds = comp.get('bedrooms', '')
+                                                comp_baths = comp.get('bathrooms', '')
+                                                comp_cols[i] = f"{comp_address} | ${comp_price:,.0f} | {comp_date} | {comp_beds}bd/{comp_baths}ba | {comp_sqft}sf"
+                                    except Exception as e:
+                                        print(f"  Error fetching comps: {e}")
+
+                                value_cols = [
+                                    deal_status,
+                                    f"${market_value:,.0f}",
+                                    f"${arv_needed:,.0f}",
+                                    f"${value_vs_arv:,.0f}",
+                                    value_supports,
+                                    f"${mao:,.0f}"
+                                ] + comp_cols
+                            else:
+                                mao = arv_needed * 0.50
+                                value_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
+                        except Exception as e:
+                            print(f"  Error fetching Rentcast value: {e}")
+                            mao = arv_needed * 0.50
+                            value_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
+                    except Exception as e:
+                        print(f"  Error calculating flip after Rentcast sqft: {e}")
+                        value_cols = ["ERROR", "", "", "", "", "", "", "", ""]
+                        flip_results = ["", "", "ERROR"] + [""] * 29
+                else:
+                    # Still no sqft - add empty columns (9 value+comps + 2 sqft + 30 flip = 41)
+                    value_cols = ["NO SQFT", "N/A", "N/A", "N/A", "N/A", "N/A", "", "", ""]
+                    flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 29
+
+            # Format output (9 value+comps + 2 sqft + 30 flip = 41 total)
             results_to_write.append(value_cols + flip_results)
 
         except Exception as e:
             failed += 1
-            # Add empty columns for failed rows (8 value+comps + 2 sqft + 30 flip = 40)
-            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", ""] + [""] * 32)
+            # Add empty columns for failed rows (9 value+comps + 2 sqft + 30 flip = 41)
+            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", "", ""] + [""] * 32)
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
     written_back = False
     if request.write_back and results_to_write:
         try:
-            # Write to columns X through BP (40 columns: 5 value + 3 comps + 2 sqft + 30 flip)
+            # Write to columns X through BQ (41 columns: 6 value + 3 comps + 2 sqft + 30 flip)
             # First, add/update header row
             header_row_num = request.start_row - 1
             if header_row_num >= 1:
                 headers = [
-                    # Market value comparison columns (X-AB)
-                    'Deal_Status', 'Market_Value', 'ARV_Needed', 'Market_Value_vs_ARV', 'Market_Supports_Deal',
-                    # Comparable properties (AC-AE) - only for GOOD DEAL
+                    # Market value comparison columns (X-AC)
+                    'Deal_Status', 'Market_Value', 'ARV_Needed', 'Market_Value_vs_ARV', 'Market_Supports_Deal', 'Maximum_Allowable_Offer',
+                    # Comparable properties (AD-AF) - only for GOOD DEAL
                     'Comp_1', 'Comp_2', 'Comp_3',
-                    # Sqft info columns (AF-AG)
+                    # Sqft info columns (AG-AH)
                     'Sqft_Used', 'Sqft_Source',
-                    # Flip calculator columns (AE-BM)
+                    # Flip calculator columns (AI-BN)
                     'Flip_Is_Profitable', 'Flip_Meets_20pct_ROI', 'Flip_Meets_70pct_Rule',
                     'Flip_ROI_Pct', 'Flip_Gross_Profit', 'Flip_Profit_Margin_Pct',
                     'Flip_Purchase_Price', 'Flip_ARV', 'Flip_Total_All_Costs', 'Flip_Cash_Needed', 'Flip_Max_Offer_70_Rule',
@@ -553,12 +688,12 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     'Flip_Staging', 'Flip_Closing_Costs_Sell', 'Flip_Seller_Credit',
                     'Flip_Listing_Commission', 'Flip_Buyer_Commission', 'Flip_Recommended_ARV'
                 ]
-                worksheet.update(f'X{header_row_num}:BP{header_row_num}', [headers])
+                worksheet.update(f'X{header_row_num}:BQ{header_row_num}', [headers])
 
             # Write prediction results
             start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'BP{end_row}'
+            end_cell = f'BQ{end_row}'
 
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)
             written_back = True
