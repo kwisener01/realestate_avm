@@ -472,51 +472,70 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                             else:
                                 deal_status = "NO DEAL"
 
+                            # Fetch comps for GOOD DEAL properties
+                            comp_cols = ["", "", ""]  # Default: 3 empty comp columns
+                            if deal_status == "GOOD DEAL":
+                                print(f"  Fetching comps for GOOD DEAL property")
+                                try:
+                                    property_data = rentcast.get_property_data(address, city, "GA", zipcode)
+                                    if property_data and 'comparables' in property_data:
+                                        comps = property_data['comparables'][:3]  # Top 3 comps
+                                        for i, comp in enumerate(comps):
+                                            # Format: Address | $Price | Date
+                                            comp_address = comp.get('address', 'N/A')
+                                            comp_price = comp.get('price', 0)
+                                            comp_date = comp.get('saleDate', 'N/A')
+                                            comp_cols[i] = f"{comp_address} | ${comp_price:,.0f} | {comp_date}"
+                                except Exception as e:
+                                    print(f"  Error fetching comps: {e}")
+
                             value_cols = [
                                 deal_status,
                                 f"${market_value:,.0f}",
                                 f"${arv_needed:,.0f}",
                                 f"${value_vs_arv:,.0f}",
                                 value_supports
-                            ]
+                            ] + comp_cols
                         else:
                             print(f"  Rentcast value not available")
-                            value_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A"]
+                            value_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A", "", "", ""]
                     except Exception as e:
                         print(f"  Error fetching Rentcast value: {e}")
-                        value_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A"]
+                        value_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A", "", "", ""]
 
                 except Exception as e:
                     print(f"Error calculating flip for row {idx}: {e}")
-                    # Add empty columns if error (5 value + 2 sqft + 30 flip = 37)
-                    value_cols = ["ERROR", "", "", "", ""]
+                    # Add empty columns if error (8 value+comps + 2 sqft + 30 flip = 40)
+                    value_cols = ["ERROR", "", "", "", "", "", "", ""]
                     flip_results = ["", "", "ERROR"] + [""] * 29
             else:
-                # No sqft data - add empty columns (5 value + 2 sqft + 30 flip = 37)
-                value_cols = ["NO SQFT", "N/A", "N/A", "N/A", "N/A"]
+                # No sqft data - add empty columns (8 value+comps + 2 sqft + 30 flip = 40)
+                value_cols = ["NO SQFT", "N/A", "N/A", "N/A", "N/A", "", "", ""]
                 flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 29
 
-            # Format output (5 market value + 2 sqft + 30 flip = 37 total)
+            # Format output (8 value+comps + 2 sqft + 30 flip = 40 total)
             results_to_write.append(value_cols + flip_results)
 
         except Exception as e:
             failed += 1
-            # Add empty columns for failed rows (5 zest + 2 sqft + 30 flip = 37)
-            results_to_write.append(["ERROR", str(e)[:30], "", "", ""] + [""] * 32)
+            # Add empty columns for failed rows (8 value+comps + 2 sqft + 30 flip = 40)
+            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", ""] + [""] * 32)
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
     written_back = False
     if request.write_back and results_to_write:
         try:
-            # Write to columns X through BM (37 columns: 5 value + 2 sqft + 30 flip)
+            # Write to columns X through BP (40 columns: 5 value + 3 comps + 2 sqft + 30 flip)
             # First, add/update header row
             header_row_num = request.start_row - 1
             if header_row_num >= 1:
                 headers = [
                     # Market value comparison columns (X-AB)
                     'Deal_Status', 'Market_Value', 'ARV_Needed', 'Market_Value_vs_ARV', 'Market_Supports_Deal',
-                    # Sqft info columns (AC-AD)
+                    # Comparable properties (AC-AE) - only for GOOD DEAL
+                    'Comp_1', 'Comp_2', 'Comp_3',
+                    # Sqft info columns (AF-AG)
                     'Sqft_Used', 'Sqft_Source',
                     # Flip calculator columns (AE-BM)
                     'Flip_Is_Profitable', 'Flip_Meets_20pct_ROI', 'Flip_Meets_70pct_Rule',
@@ -529,12 +548,12 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     'Flip_Staging', 'Flip_Closing_Costs_Sell', 'Flip_Seller_Credit',
                     'Flip_Listing_Commission', 'Flip_Buyer_Commission', 'Flip_Recommended_ARV'
                 ]
-                worksheet.update(f'X{header_row_num}:BM{header_row_num}', [headers])
+                worksheet.update(f'X{header_row_num}:BP{header_row_num}', [headers])
 
             # Write prediction results
             start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'BM{end_row}'
+            end_cell = f'BP{end_row}'
 
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)
             written_back = True

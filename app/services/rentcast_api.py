@@ -67,7 +67,7 @@ class RentcastAPIService:
 
     def get_property_data(self, address: str, city: str = None, state: str = "GA", zipcode: str = None) -> Optional[Dict]:
         """
-        Get full property data from Rentcast
+        Get full property data from Rentcast including comps
 
         Args:
             address: Street address
@@ -76,7 +76,7 @@ class RentcastAPIService:
             zipcode: ZIP code (optional)
 
         Returns:
-            Complete property data dict, or None if not available
+            Complete property data dict with value, comparables, etc., or None if not available
         """
         try:
             # Construct full address
@@ -108,6 +108,26 @@ class RentcastAPIService:
         except Exception as e:
             print(f"Error fetching from Rentcast API: {e}")
             return None
+
+    def get_comparables(self, address: str, city: str = None, state: str = "GA", zipcode: str = None) -> Optional[list]:
+        """
+        Get comparable properties used for valuation
+
+        Args:
+            address: Street address
+            city: City name
+            state: State code (default: "GA")
+            zipcode: ZIP code (optional)
+
+        Returns:
+            List of comparable properties sorted by correlation, or None if not available
+        """
+        data = self.get_property_data(address, city, state, zipcode)
+
+        if data and 'comparables' in data:
+            return data['comparables']
+
+        return None
 
 
 # Example usage
