@@ -452,13 +452,15 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     ]
 
                     # Fetch Zestimate and create comparison columns
+                    # Always show ARV_Needed even if Zestimate fails
+                    arv_needed = flip_result.recommended_arv_for_profit
+
                     try:
                         address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else None
                         print(f"  Fetching Zestimate for {address}, {city}")
                         zestimate = zillow.get_zestimate(address, city, "GA") if address else None
 
                         if zestimate:
-                            arv_needed = flip_result.recommended_arv_for_profit
                             zest_vs_arv = zestimate - arv_needed
                             zest_supports = "YES" if zestimate >= arv_needed else "NO"
 
@@ -479,10 +481,10 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                             ]
                         else:
                             print(f"  Zestimate not available")
-                            zestimate_cols = ["UNKNOWN", "Not Available", "", "", ""]
+                            zestimate_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A"]
                     except Exception as e:
                         print(f"  Error fetching Zestimate: {e}")
-                        zestimate_cols = ["ERROR", "API Error", "", "", ""]
+                        zestimate_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A"]
 
                 except Exception as e:
                     print(f"Error calculating flip for row {idx}: {e}")
