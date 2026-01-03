@@ -199,7 +199,7 @@ class FlipCalculatorParameters(BaseModel):
     closing_costs_sell_percent: Optional[float] = Field(0.01, ge=0, le=1, description="Closing costs on sale (0.01 = 1%)")
     seller_credit_percent: Optional[float] = Field(0.03, ge=0, le=1, description="Seller credit percentage (0.03 = 3%)")
     staging_marketing: Optional[float] = Field(2000, ge=0, description="Staging and marketing costs")
-    listing_commission_rate: Optional[float] = Field(0.01, ge=0, le=1, description="Listing agent commission (0.01 = 1%)")
+    listing_commission_rate: Optional[float] = Field(0.025, ge=0, le=1, description="Listing agent commission (0.025 = 2.5%)")
     buyer_commission_rate: Optional[float] = Field(0.025, ge=0, le=1, description="Buyer's agent commission (0.025 = 2.5%)")
 
 

@@ -214,8 +214,8 @@
             <h3>📊 How It Works</h3>
             <p>
                 Enter your Google Sheets URL and adjust the flip calculator parameters below.
-                The system will analyze each property using these settings and write results back to columns X through AF
-                with deal quality indicators, market value comparisons, and comparable properties.
+                The system will analyze each property using these settings and write results back to columns X through AH
+                with deal quality indicators, market value comparisons, rehab costs, total costs, and comparable properties.
             </p>
         </div>
 
@@ -368,9 +368,9 @@
                     <div class="form-group">
                         <label for="listingCommission">
                             Listing Commission
-                            <span class="label-hint">(1% default)</span>
+                            <span class="label-hint">(2.5% default)</span>
                         </label>
-                        <input type="number" id="listingCommission" name="listingCommission" value="1" min="0" max="10" step="0.1">
+                        <input type="number" id="listingCommission" name="listingCommission" value="2.5" min="0" max="10" step="0.1">
                     </div>
                     <div class="form-group">
                         <label for="buyerCommission">
@@ -409,7 +409,7 @@
             document.getElementById('closingCostsSell').value = 1;
             document.getElementById('sellerCredit').value = 3;
             document.getElementById('stagingCost').value = 2000;
-            document.getElementById('listingCommission').value = 1;
+            document.getElementById('listingCommission').value = 2.5;
             document.getElementById('buyerCommission').value = 2.5;
             showStatus('Parameters reset to defaults', 'success');
         }
@@ -466,7 +466,7 @@
                 if (response.ok) {
                     showStatus(
                         `✅ Success! Analyzed ${result.successful_predictions} properties. ` +
-                        `Failed: ${result.failed_predictions}. Results written to columns X-AF.`,
+                        `Failed: ${result.failed_predictions}. Results written to columns X-AH.`,
                         'success'
                     );
                 } else {

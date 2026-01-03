@@ -225,18 +225,20 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
     ## Output Columns
 
-    Writes 9 columns to the sheet (columns X through AF):
+    Writes 11 columns to the sheet (columns X through AH):
 
-    **Market Value Analysis (X-AC):**
+    **Market Value Analysis (X-AE):**
     - **X: Deal Status** - GOOD DEAL, MAYBE, or NO DEAL (based on Rentcast Market Value vs ARV Needed)
     - **Y: Market Value** - Rentcast property valuation
     - **Z: ARV Needed** - After Repair Value needed for 20% ROI
     - **AA: Market Value vs ARV** - Difference between market value and ARV needed
     - **AB: Market Supports Deal** - YES/NO if market value supports the deal
-    - **AC: Maximum Allowable Offer** - 50% of ARV Needed (MAO = ARV × 0.50)
+    - **AC: Rehab Cost** - Total renovation costs from flip calculator
+    - **AD: Total Cost** - Total all-in costs (purchase + renovation + holding + selling)
+    - **AE: Maximum Allowable Offer** - 50% of ARV Needed (MAO = ARV × 0.50)
 
-    **Comparable Properties (AD-AF) - Only for GOOD DEAL:**
-    - **AD-AF**: Top 3 comparable sales from Rentcast (Address | Price | Date | Beds/Baths | Sqft)
+    **Comparable Properties (AF-AH) - Only for GOOD DEAL:**
+    - **AF-AH**: Top 3 comparable sales from Rentcast (Address | Price | Date | Beds/Baths | Sqft)
 
     **Note on Flip Calculator:**
     Flip calculator parameters (repair costs, hold time, financing terms, etc.) are customizable
@@ -374,7 +376,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
         closing_sell_pct = params.closing_costs_sell_percent if params.closing_costs_sell_percent is not None else 0.01
         seller_credit_pct = params.seller_credit_percent if params.seller_credit_percent is not None else 0.03
         staging_cost = params.staging_marketing if params.staging_marketing is not None else 2000
-        listing_commission = params.listing_commission_rate if params.listing_commission_rate is not None else 0.01
+        listing_commission = params.listing_commission_rate if params.listing_commission_rate is not None else 0.025
         buyer_commission = params.buyer_commission_rate if params.buyer_commission_rate is not None else 0.025
     else:
         # Use all defaults
@@ -391,7 +393,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
         closing_sell_pct = 0.01
         seller_credit_pct = 0.03
         staging_cost = 2000
-        listing_commission = 0.01
+        listing_commission = 0.025
         buyer_commission = 0.025
 
     print(f"DEBUG: Using parameters - repair_cost: {repair_cost_per_sqft}, hold_time: {hold_time_months}")
@@ -568,21 +570,23 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                                 f"${arv_needed:,.0f}",
                                 f"${value_vs_arv:,.0f}",
                                 value_supports,
+                                f"${flip_result.renovation.total_renovation:,.0f}",
+                                f"${flip_result.profit_analysis.total_all_costs:,.0f}",
                                 f"${mao:,.0f}"
                             ] + comp_cols
                         else:
                             print(f"  Rentcast value not available")
                             mao = arv_needed * 0.50
-                            value_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
+                            value_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
                     except Exception as e:
                         print(f"  Error fetching Rentcast value: {e}")
                         mao = arv_needed * 0.50 if arv_needed else 0
-                        value_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
+                        value_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
 
                 except Exception as e:
                     print(f"Error calculating flip for row {idx}: {e}")
                     # Add empty columns if error (9 value+comps + 2 sqft + 15 flip = 26)
-                    value_cols = ["ERROR", "", "", "", "", "", "", "", ""]
+                    value_cols = ["ERROR", "", "", "", "", "", "", "", "", "", ""]
                     flip_results = ["", "", "ERROR"] + [""] * 13
             else:
                 # No sqft data - fetch from Rentcast if address available
@@ -705,31 +709,33 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                                     f"${arv_needed:,.0f}",
                                     f"${value_vs_arv:,.0f}",
                                     value_supports,
+                                    f"${flip_result.renovation.total_renovation:,.0f}",
+                                    f"${flip_result.profit_analysis.total_all_costs:,.0f}",
                                     f"${mao:,.0f}"
                                 ] + comp_cols
                             else:
                                 mao = arv_needed * 0.50
-                                value_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
+                                value_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
                         except Exception as e:
                             print(f"  Error fetching Rentcast value: {e}")
                             mao = arv_needed * 0.50
-                            value_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
+                            value_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
                     except Exception as e:
                         print(f"  Error calculating flip after Rentcast sqft: {e}")
-                        value_cols = ["ERROR", "", "", "", "", "", "", "", ""]
+                        value_cols = ["ERROR", "", "", "", "", "", "", "", "", "", ""]
                         flip_results = ["", "", "ERROR"] + [""] * 13
                 else:
                     # Still no sqft - add error status (only value_cols written, not flip_results)
-                    value_cols = ["NO SQFT", "N/A", "N/A", "N/A", "N/A", "N/A", "", "", ""]
+                    value_cols = ["NO SQFT", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "", "", ""]
                     flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 13
 
-            # Format output (9 columns: 6 value + 3 comps only, flip calculated but not written)
+            # Format output (11 columns: 8 value + 3 comps, flip calculated but not written)
             results_to_write.append(value_cols)
 
         except Exception as e:
             failed += 1
-            # Add empty columns for failed rows (9 columns: 6 value + 3 comps)
-            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", ""])
+            # Add empty columns for failed rows (11 columns: 8 value + 3 comps)
+            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", "", "", "", ""])
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
@@ -740,23 +746,24 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     if request.write_back and results_to_write:
         try:
             print(f"DEBUG: Starting write operation to sheet...")
-            # Write to columns X through AF (9 columns: 6 value + 3 comps)
+            # Write to columns X through AH (11 columns: 8 value + 3 comps)
             # First, add/update header row
             header_row_num = request.start_row - 1
             if header_row_num >= 1:
                 headers = [
-                    # Market value comparison columns (X-AC)
-                    'Deal_Status', 'Market_Value', 'ARV_Needed', 'Market_Value_vs_ARV', 'Market_Supports_Deal', 'Maximum_Allowable_Offer',
-                    # Comparable properties (AD-AF) - only for GOOD DEAL
+                    # Market value comparison columns (X-AE)
+                    'Deal_Status', 'Market_Value', 'ARV_Needed', 'Market_Value_vs_ARV', 'Market_Supports_Deal',
+                    'Rehab_Cost', 'Total_Cost', 'Maximum_Allowable_Offer',
+                    # Comparable properties (AF-AH) - only for GOOD DEAL
                     'Comp_1', 'Comp_2', 'Comp_3'
                 ]
                 print(f"DEBUG: Writing headers to row {header_row_num}")
-                worksheet.update(f'X{header_row_num}:AF{header_row_num}', [headers])
+                worksheet.update(f'X{header_row_num}:AH{header_row_num}', [headers])
 
             # Write prediction results
             start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'AF{end_row}'
+            end_cell = f'AH{end_row}'
 
             print(f"DEBUG: Writing {len(results_to_write)} rows from {start_cell} to {end_cell}")
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)
