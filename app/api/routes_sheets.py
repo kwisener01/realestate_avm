@@ -225,7 +225,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
     ## Output Columns
 
-    Writes 25 columns to the sheet (columns X through AV):
+    Writes 9 columns to the sheet (columns X through AF):
 
     **Market Value Analysis (X-AC):**
     - **X: Deal Status** - GOOD DEAL, MAYBE, or NO DEAL (based on Rentcast Market Value vs ARV Needed)
@@ -238,19 +238,11 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     **Comparable Properties (AD-AF) - Only for GOOD DEAL:**
     - **AD-AF**: Top 3 comparable sales from Rentcast (Address | Price | Date | Beds/Baths | Sqft)
 
-    **Square Footage Info (AG-AH):**
-    - **AG: Sqft Used** - Square footage used for calculations
-    - **AH: Sqft Source** - Source of sqft data (Sheet or Rentcast)
-
-    **Flip Calculator Summary (AI-AV) - Customizable via web UI:**
-    - **AI-AK**: Quick indicators (Profitable, Meets 20% ROI, Meets 70% Rule)
-    - **AL-AN**: Key metrics (ROI %, Gross Profit, Profit Margin %)
-    - **AO-AR**: Core numbers (Purchase, Total Costs, Cash Needed, Max Offer 70%)
-    - **AS-AV**: Cost summaries (Total Acquisition, Total Renovation, Total Holding, Total Selling)
-
-    Note: Detailed cost breakdowns (repair costs, loan details, commissions, etc.) are now
-    adjustable via the web UI at the root URL and applied during calculation but not output
-    to the sheet to keep the output focused on key metrics.
+    **Note on Flip Calculator:**
+    Flip calculator parameters (repair costs, hold time, financing terms, etc.) are customizable
+    via the web UI. The flip calculator runs internally for each property to calculate ARV Needed,
+    but detailed flip metrics are not written to the sheet to keep output focused on market value
+    analysis and deal quality indicators.
 
     ## Deal Quality Determination
 
@@ -489,7 +481,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     flip_result = calculate_flip_deal(flip_input)
                     print(f"DEBUG: Calculated flip for row {idx}, ROI: {flip_result.profit_analysis.roi_percent:.1f}%")
 
-                    # Format flip results (16 columns: 2 sqft + 14 flip)
+                    # Calculate flip results (for internal use, not written to sheet)
                     flip_results = [
                         # Sqft info (2 columns)
                         str(sqft),
@@ -727,17 +719,17 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                         value_cols = ["ERROR", "", "", "", "", "", "", "", ""]
                         flip_results = ["", "", "ERROR"] + [""] * 13
                 else:
-                    # Still no sqft - add empty columns (9 value+comps + 16 flip_results = 25)
+                    # Still no sqft - add error status (only value_cols written, not flip_results)
                     value_cols = ["NO SQFT", "N/A", "N/A", "N/A", "N/A", "N/A", "", "", ""]
                     flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 13
 
-            # Format output (9 value+comps + 16 flip_results = 25 total)
-            results_to_write.append(value_cols + flip_results)
+            # Format output (9 columns: 6 value + 3 comps only, flip calculated but not written)
+            results_to_write.append(value_cols)
 
         except Exception as e:
             failed += 1
-            # Add empty columns for failed rows (9 value+comps + 16 flip_results = 25)
-            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", "", ""] + [""] * 16)
+            # Add empty columns for failed rows (9 columns: 6 value + 3 comps)
+            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", ""])
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
@@ -748,7 +740,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     if request.write_back and results_to_write:
         try:
             print(f"DEBUG: Starting write operation to sheet...")
-            # Write to columns X through AV (25 columns: 6 value + 3 comps + 2 sqft + 14 flip)
+            # Write to columns X through AF (9 columns: 6 value + 3 comps)
             # First, add/update header row
             header_row_num = request.start_row - 1
             if header_row_num >= 1:
@@ -756,22 +748,15 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     # Market value comparison columns (X-AC)
                     'Deal_Status', 'Market_Value', 'ARV_Needed', 'Market_Value_vs_ARV', 'Market_Supports_Deal', 'Maximum_Allowable_Offer',
                     # Comparable properties (AD-AF) - only for GOOD DEAL
-                    'Comp_1', 'Comp_2', 'Comp_3',
-                    # Sqft info columns (AG-AH)
-                    'Sqft_Used', 'Sqft_Source',
-                    # Flip calculator columns (AI-AV) - Summary metrics only
-                    'Flip_Is_Profitable', 'Flip_Meets_20pct_ROI', 'Flip_Meets_70pct_Rule',
-                    'Flip_ROI_Pct', 'Flip_Gross_Profit', 'Flip_Profit_Margin_Pct',
-                    'Flip_Purchase_Price', 'Flip_Total_All_Costs', 'Flip_Cash_Needed', 'Flip_Max_Offer_70_Rule',
-                    'Flip_Total_Acquisition', 'Flip_Total_Renovation', 'Flip_Total_Holding', 'Flip_Total_Selling'
+                    'Comp_1', 'Comp_2', 'Comp_3'
                 ]
                 print(f"DEBUG: Writing headers to row {header_row_num}")
-                worksheet.update(f'X{header_row_num}:AV{header_row_num}', [headers])
+                worksheet.update(f'X{header_row_num}:AF{header_row_num}', [headers])
 
             # Write prediction results
             start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'AV{end_row}'
+            end_cell = f'AF{end_row}'
 
             print(f"DEBUG: Writing {len(results_to_write)} rows from {start_cell} to {end_cell}")
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)

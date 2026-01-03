@@ -214,8 +214,8 @@
             <h3>📊 How It Works</h3>
             <p>
                 Enter your Google Sheets URL and adjust the flip calculator parameters below.
-                The system will analyze each property using these settings and write results back to columns X through AV
-                with deal quality indicators, market value comparisons, and summary cost breakdowns.
+                The system will analyze each property using these settings and write results back to columns X through AF
+                with deal quality indicators, market value comparisons, and comparable properties.
             </p>
         </div>
 
@@ -466,7 +466,7 @@
                 if (response.ok) {
                     showStatus(
                         `✅ Success! Analyzed ${result.successful_predictions} properties. ` +
-                        `Failed: ${result.failed_predictions}. Results written to columns X-AV.`,
+                        `Failed: ${result.failed_predictions}. Results written to columns X-AF.`,
                         'success'
                     );
                 } else {
