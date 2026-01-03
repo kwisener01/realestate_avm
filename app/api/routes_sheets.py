@@ -374,45 +374,6 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
             if not assessed_value or assessed_value <= 0:
                 assessed_value = list_price * 0.35
 
-            # Get area-specific multiples
-            mult_conservative = get_arv_multiple(zipcode, city, 'conservative')
-            mult_moderate = get_arv_multiple(zipcode, city, 'moderate')
-            mult_aggressive = get_arv_multiple(zipcode, city, 'aggressive')
-
-            # Calculate ARVs
-            arv_conservative = assessed_value * mult_conservative
-            arv_moderate = assessed_value * mult_moderate
-            arv_aggressive = assessed_value * mult_aggressive
-
-            # Determine deal status based on 70% rule (or 50% for great deals)
-            # GOOD DEAL: List price <= 50% of ARV
-            # MAYBE: List price <= 60% of ARV
-            # NO DEAL: List price > 60% of ARV
-            arv_ratio = list_price / arv_moderate
-
-            if arv_ratio <= 0.50:
-                deal_status = "GOOD DEAL"
-            elif arv_ratio <= 0.60:
-                deal_status = "MAYBE"
-            else:
-                deal_status = "NO DEAL"
-
-            # Determine confidence based on data source
-            if zipcode and arv_multiples_zip is not None:
-                zip_match = arv_multiples_zip[arv_multiples_zip['Zip'] == str(zipcode)]
-                if len(zip_match) > 0:
-                    sample_size = zip_match.iloc[0]['Sample_Size']
-                    if sample_size >= 20:
-                        confidence = "HIGH"
-                    elif sample_size >= 10:
-                        confidence = "MEDIUM"
-                    else:
-                        confidence = "LOW"
-                else:
-                    confidence = "MEDIUM"  # City-level fallback
-            else:
-                confidence = "MEDIUM"  # City-level or default
-
             successful += 1
 
             # Calculate flip deal if sqft available
@@ -431,13 +392,14 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else "Property"
 
                     # Create flip calculator input
+                    # Use list price as both purchase price and ARV estimate
                     flip_input = FlipCalculatorInput(
                         property_address=address,
                         city=city or "",
                         zip_code=zipcode or "00000",
                         sqft_living=sqft,
                         purchase_price=list_price,
-                        arv=arv_moderate,  # Use moderate ARV
+                        arv=list_price,  # Use list price as ARV estimate
                         hold_time_months=5
                     )
 
@@ -492,35 +454,27 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                 # No sqft data - add empty flip columns (2 sqft + 30 flip = 32)
                 flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 29
 
-            # Format output (5 ARV columns + 32 flip columns = 37 total)
-            results_to_write.append([
-                deal_status,
-                f"${arv_conservative:,.0f}",
-                f"${arv_moderate:,.0f}",
-                f"${arv_aggressive:,.0f}",
-                confidence
-            ] + flip_results)
+            # Format output (32 flip columns only)
+            results_to_write.append(flip_results)
 
         except Exception as e:
             failed += 1
-            # Add empty columns for failed rows (5 ARV + 32 flip = 37 total)
-            results_to_write.append(["ERROR", str(e)[:30], "", "", ""] + [""] * 32)
+            # Add empty columns for failed rows (32 flip columns)
+            results_to_write.append(["ERROR", str(e)[:30]] + [""] * 30)
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
     written_back = False
     if request.write_back and results_to_write:
         try:
-            # Write to columns X through BM (37 columns total: 5 ARV + 32 flip)
+            # Write to columns X through AW (32 flip columns only)
             # First, add/update header row
             header_row_num = request.start_row - 1
             if header_row_num >= 1:
                 headers = [
-                    # ARV columns (X-AB)
-                    'Deal Status', 'ARV (Conservative)', 'ARV (Moderate)', 'ARV (Aggressive)', 'Confidence',
-                    # Sqft info columns (AC-AD)
+                    # Sqft info columns (X-Y)
                     'Sqft_Used', 'Sqft_Source',
-                    # Flip calculator columns (AE-BM)
+                    # Flip calculator columns (Z-AW)
                     'Flip_Is_Profitable', 'Flip_Meets_20pct_ROI', 'Flip_Meets_70pct_Rule',
                     'Flip_ROI_Pct', 'Flip_Gross_Profit', 'Flip_Profit_Margin_Pct',
                     'Flip_Purchase_Price', 'Flip_ARV', 'Flip_Total_All_Costs', 'Flip_Cash_Needed', 'Flip_Max_Offer_70_Rule',
@@ -531,12 +485,12 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     'Flip_Staging', 'Flip_Closing_Costs_Sell', 'Flip_Seller_Credit',
                     'Flip_Listing_Commission', 'Flip_Buyer_Commission', 'Flip_Recommended_ARV'
                 ]
-                worksheet.update(f'X{header_row_num}:BM{header_row_num}', [headers])
+                worksheet.update(f'X{header_row_num}:AW{header_row_num}', [headers])
 
             # Write prediction results
             start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'BM{end_row}'
+            end_cell = f'AW{end_row}'
 
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)
             written_back = True
