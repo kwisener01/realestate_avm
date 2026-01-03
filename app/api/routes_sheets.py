@@ -365,22 +365,40 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     rentcast = RentcastAPIService()
 
     # Extract custom parameters or use defaults
-    params = request.parameters if request.parameters else {}
-    repair_cost_per_sqft = params.repair_cost_per_sqft if hasattr(params, 'repair_cost_per_sqft') and params.repair_cost_per_sqft else 45
-    hold_time_months = params.hold_time_months if hasattr(params, 'hold_time_months') and params.hold_time_months else 5
-    interest_rate = params.interest_rate_annual if hasattr(params, 'interest_rate_annual') and params.interest_rate_annual else 0.10
-    loan_points = params.loan_points if hasattr(params, 'loan_points') and params.loan_points else 0.01
-    loan_to_cost = params.loan_to_cost_ratio if hasattr(params, 'loan_to_cost_ratio') and params.loan_to_cost_ratio else 0.90
-    monthly_hoa = params.monthly_hoa_maintenance if hasattr(params, 'monthly_hoa_maintenance') and params.monthly_hoa_maintenance else 150
-    monthly_insurance = params.monthly_insurance if hasattr(params, 'monthly_insurance') and params.monthly_insurance else 100
-    monthly_utilities = params.monthly_utilities if hasattr(params, 'monthly_utilities') and params.monthly_utilities else 150
-    property_tax_rate = params.property_tax_rate_annual if hasattr(params, 'property_tax_rate_annual') and params.property_tax_rate_annual else 0.012
-    closing_buy_pct = params.closing_costs_buy_percent if hasattr(params, 'closing_costs_buy_percent') and params.closing_costs_buy_percent else 0.01
-    closing_sell_pct = params.closing_costs_sell_percent if hasattr(params, 'closing_costs_sell_percent') and params.closing_costs_sell_percent else 0.01
-    seller_credit_pct = params.seller_credit_percent if hasattr(params, 'seller_credit_percent') and params.seller_credit_percent else 0.03
-    staging_cost = params.staging_marketing if hasattr(params, 'staging_marketing') and params.staging_marketing else 2000
-    listing_commission = params.listing_commission_rate if hasattr(params, 'listing_commission_rate') and params.listing_commission_rate else 0.01
-    buyer_commission = params.buyer_commission_rate if hasattr(params, 'buyer_commission_rate') and params.buyer_commission_rate else 0.025
+    params = request.parameters
+    if params:
+        repair_cost_per_sqft = params.repair_cost_per_sqft or 45
+        hold_time_months = params.hold_time_months or 5
+        interest_rate = params.interest_rate_annual or 0.10
+        loan_points = params.loan_points or 0.01
+        loan_to_cost = params.loan_to_cost_ratio or 0.90
+        monthly_hoa = params.monthly_hoa_maintenance or 150
+        monthly_insurance = params.monthly_insurance or 100
+        monthly_utilities = params.monthly_utilities or 150
+        property_tax_rate = params.property_tax_rate_annual or 0.012
+        closing_buy_pct = params.closing_costs_buy_percent or 0.01
+        closing_sell_pct = params.closing_costs_sell_percent or 0.01
+        seller_credit_pct = params.seller_credit_percent or 0.03
+        staging_cost = params.staging_marketing or 2000
+        listing_commission = params.listing_commission_rate or 0.01
+        buyer_commission = params.buyer_commission_rate or 0.025
+    else:
+        # Use all defaults
+        repair_cost_per_sqft = 45
+        hold_time_months = 5
+        interest_rate = 0.10
+        loan_points = 0.01
+        loan_to_cost = 0.90
+        monthly_hoa = 150
+        monthly_insurance = 100
+        monthly_utilities = 150
+        property_tax_rate = 0.012
+        closing_buy_pct = 0.01
+        closing_sell_pct = 0.01
+        seller_credit_pct = 0.03
+        staging_cost = 2000
+        listing_commission = 0.01
+        buyer_commission = 0.025
 
     # Process each row and calculate area-specific ARV
     successful = 0
