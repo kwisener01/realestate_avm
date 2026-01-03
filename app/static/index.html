@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real Estate AVM - ARV Analysis with Area-Specific Multiples</title>
+    <title>Real Estate Flip Calculator - Deal Analysis</title>
     <style>
         * {
             margin: 0;
@@ -15,9 +15,6 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
             padding: 20px;
         }
 
@@ -25,8 +22,8 @@
             background: white;
             border-radius: 20px;
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            max-width: 800px;
-            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
             padding: 40px;
         }
 
@@ -42,8 +39,39 @@
             font-size: 1.1em;
         }
 
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+        }
+
+        .section-title {
+            font-size: 1.3em;
+            color: #333;
+            margin-bottom: 15px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-title::before {
+            content: '';
+            width: 4px;
+            height: 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 2px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 0;
         }
 
         label {
@@ -51,9 +79,17 @@
             margin-bottom: 8px;
             color: #333;
             font-weight: 600;
+            font-size: 0.9em;
         }
 
-        input[type="text"] {
+        .label-hint {
+            font-weight: 400;
+            color: #666;
+            font-size: 0.85em;
+        }
+
+        input[type="text"],
+        input[type="number"] {
             width: 100%;
             padding: 12px 16px;
             border: 2px solid #e0e0e0;
@@ -62,44 +98,33 @@
             transition: border-color 0.3s;
         }
 
-        input[type="text"]:focus {
+        input[type="text"]:focus,
+        input[type="number"]:focus {
             outline: none;
             border-color: #667eea;
-        }
-
-        .options {
-            margin-bottom: 20px;
-        }
-
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 10px;
-        }
-
-        input[type="checkbox"] {
-            width: 20px;
-            height: 20px;
-            cursor: pointer;
         }
 
         .btn {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
-            padding: 14px 32px;
-            font-size: 16px;
+            padding: 16px 32px;
+            font-size: 18px;
             font-weight: 600;
             border-radius: 8px;
             cursor: pointer;
             width: 100%;
             transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 20px;
         }
 
         .btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
         }
 
         .btn:disabled {
@@ -108,87 +133,31 @@
             transform: none;
         }
 
-        .loading {
-            display: none;
-            text-align: center;
-            margin: 20px 0;
-        }
-
-        .loading.active {
-            display: block;
-        }
-
-        .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .results {
-            display: none;
-            margin-top: 30px;
-            padding: 20px;
-            background: #f8f9fa;
-            border-radius: 12px;
-        }
-
-        .results.active {
-            display: block;
-        }
-
-        .result-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #e0e0e0;
-        }
-
-        .stat {
-            text-align: center;
-        }
-
-        .stat-value {
-            font-size: 2em;
-            font-weight: bold;
-            color: #667eea;
-        }
-
-        .stat-label {
-            color: #666;
-            font-size: 0.9em;
-            margin-top: 5px;
-        }
-
-        .success {
-            color: #28a745;
-        }
-
-        .error-stat {
-            color: #dc3545;
-        }
-
-        .error-message {
-            display: none;
-            padding: 15px;
-            background: #fee;
-            border: 1px solid #fcc;
-            border-radius: 8px;
-            color: #c33;
+        .status {
             margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
         }
 
-        .error-message.active {
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+
+        .status.loading {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
             display: block;
         }
 
@@ -206,161 +175,282 @@
             font-size: 1em;
         }
 
-        .info-box ul {
-            margin-left: 20px;
+        .info-box p {
             color: #555;
-            font-size: 0.95em;
+            font-size: 0.9em;
+            line-height: 1.5;
         }
 
-        .info-box li {
-            margin: 5px 0;
+        .reset-btn {
+            background: #6c757d;
+            margin-top: 10px;
         }
 
-        .info-box strong {
-            color: #1565C0;
+        .reset-btn:hover {
+            background: #5a6268;
         }
 
-        .api-link {
-            text-align: center;
-            margin-top: 20px;
-            padding-top: 20px;
-            border-top: 1px solid #e0e0e0;
-        }
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+            }
 
-        .api-link a {
-            color: #667eea;
-            text-decoration: none;
-            font-weight: 600;
-        }
+            h1 {
+                font-size: 1.5em;
+            }
 
-        .api-link a:hover {
-            text-decoration: underline;
-        }
-
-        .success-banner {
-            background: #d4edda;
-            border: 1px solid #c3e6cb;
-            color: #155724;
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 20px;
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Real Estate ARV Analyzer</h1>
-        <p class="subtitle">Area-specific ARV estimates based on 598 actual flip transactions</p>
+        <h1>🏠 Real Estate Flip Calculator</h1>
+        <p class="subtitle">Analyze flip deals with customizable parameters from your Google Sheets</p>
 
         <div class="info-box">
-            <h3>📋 Required MLS Data Format</h3>
-            <ul>
-                <li><strong>Required columns:</strong> City, Zip, List Price (or Price/MLS Amount)</li>
-                <li><strong>Optional:</strong> Days On Market, Total Assessed Value, Address, etc.</li>
-                <li>First row should be headers</li>
-                <li>Share sheet with service account (Editor access)</li>
-            </ul>
+            <h3>📊 How It Works</h3>
+            <p>
+                Enter your Google Sheets URL and adjust the flip calculator parameters below.
+                The system will analyze each property using these settings and write results back to columns X through BP
+                with deal quality indicators, market value comparisons, and complete cost breakdowns.
+            </p>
         </div>
 
-        <div class="info-box">
-            <h3>📊 Output Columns (X, Y, Z, AA, AB)</h3>
-            <ul>
-                <li><strong>X:</strong> Deal Status (GOOD DEAL / MAYBE / NO DEAL)</li>
-                <li><strong>Y:</strong> ARV (Conservative) - 25th percentile</li>
-                <li><strong>Z:</strong> ARV (Moderate) - Median, recommended</li>
-                <li><strong>AA:</strong> ARV (Aggressive) - 75th percentile</li>
-                <li><strong>AB:</strong> Confidence (HIGH / MEDIUM / LOW)</li>
-            </ul>
-        </div>
-
-        <form id="predictionForm">
-            <div class="form-group">
-                <label for="sheetUrl">Google Sheets URL</label>
-                <input
-                    type="text"
-                    id="sheetUrl"
-                    name="sheetUrl"
-                    placeholder="https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"
-                    required
-                >
-            </div>
-
-            <div class="options">
-                <div class="checkbox-group">
-                    <input type="checkbox" id="writeBack" name="writeBack" checked>
-                    <label for="writeBack">Write ARV results back to sheet (columns X-AB)</label>
+        <form id="analysisForm">
+            <!-- Google Sheets Section -->
+            <div class="section">
+                <div class="section-title">Google Sheets Configuration</div>
+                <div class="form-group">
+                    <label for="sheetUrl">
+                        Google Sheets URL
+                        <span class="label-hint">(Spreadsheet ID or full URL)</span>
+                    </label>
+                    <input type="text" id="sheetUrl" name="sheetUrl" required
+                           placeholder="https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit">
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="startRow">
+                            Start Row
+                            <span class="label-hint">(First data row, typically 2)</span>
+                        </label>
+                        <input type="number" id="startRow" name="startRow" value="2" min="1" required>
+                    </div>
                 </div>
             </div>
 
+            <!-- Repair & Holding Section -->
+            <div class="section">
+                <div class="section-title">Repair & Holding Costs</div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="repairCostPerSqft">
+                            Repair Cost per Sqft
+                            <span class="label-hint">($45 default)</span>
+                        </label>
+                        <input type="number" id="repairCostPerSqft" name="repairCostPerSqft" value="45" min="0" step="1">
+                    </div>
+                    <div class="form-group">
+                        <label for="holdTimeMonths">
+                            Hold Time (Months)
+                            <span class="label-hint">(5 months default)</span>
+                        </label>
+                        <input type="number" id="holdTimeMonths" name="holdTimeMonths" value="5" min="1" step="1">
+                    </div>
+                    <div class="form-group">
+                        <label for="monthlyMaintenance">
+                            Monthly HOA/Maintenance
+                            <span class="label-hint">($150 default)</span>
+                        </label>
+                        <input type="number" id="monthlyMaintenance" name="monthlyMaintenance" value="150" min="0" step="10">
+                    </div>
+                    <div class="form-group">
+                        <label for="monthlyInsurance">
+                            Monthly Insurance
+                            <span class="label-hint">($100 default)</span>
+                        </label>
+                        <input type="number" id="monthlyInsurance" name="monthlyInsurance" value="100" min="0" step="10">
+                    </div>
+                    <div class="form-group">
+                        <label for="monthlyUtilities">
+                            Monthly Utilities
+                            <span class="label-hint">($150 default)</span>
+                        </label>
+                        <input type="number" id="monthlyUtilities" name="monthlyUtilities" value="150" min="0" step="10">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Financing Section -->
+            <div class="section">
+                <div class="section-title">Financing Parameters</div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="interestRate">
+                            Annual Interest Rate
+                            <span class="label-hint">(10% default for hard money)</span>
+                        </label>
+                        <input type="number" id="interestRate" name="interestRate" value="10" min="0" max="100" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label for="loanPoints">
+                            Loan Origination Points
+                            <span class="label-hint">(1% default)</span>
+                        </label>
+                        <input type="number" id="loanPoints" name="loanPoints" value="1" min="0" max="10" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label for="loanToValue">
+                            Loan to Cost Ratio
+                            <span class="label-hint">(90% default)</span>
+                        </label>
+                        <input type="number" id="loanToValue" name="loanToValue" value="90" min="0" max="100" step="1">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Property Taxes Section -->
+            <div class="section">
+                <div class="section-title">Property Taxes</div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="propertyTaxRate">
+                            Annual Property Tax Rate
+                            <span class="label-hint">(1.2% default for GA)</span>
+                        </label>
+                        <input type="number" id="propertyTaxRate" name="propertyTaxRate" value="1.2" min="0" max="10" step="0.1">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Transaction Costs Section -->
+            <div class="section">
+                <div class="section-title">Transaction Costs</div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="closingCostsBuy">
+                            Closing Costs (Buy)
+                            <span class="label-hint">(1% default)</span>
+                        </label>
+                        <input type="number" id="closingCostsBuy" name="closingCostsBuy" value="1" min="0" max="10" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label for="closingCostsSell">
+                            Closing Costs (Sell)
+                            <span class="label-hint">(1% default)</span>
+                        </label>
+                        <input type="number" id="closingCostsSell" name="closingCostsSell" value="1" min="0" max="10" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label for="sellerCredit">
+                            Seller Credit
+                            <span class="label-hint">(3% default)</span>
+                        </label>
+                        <input type="number" id="sellerCredit" name="sellerCredit" value="3" min="0" max="10" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label for="stagingCost">
+                            Staging & Marketing
+                            <span class="label-hint">($2,000 default)</span>
+                        </label>
+                        <input type="number" id="stagingCost" name="stagingCost" value="2000" min="0" step="100">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Commission Section -->
+            <div class="section">
+                <div class="section-title">Agent Commissions</div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="listingCommission">
+                            Listing Commission
+                            <span class="label-hint">(1% default)</span>
+                        </label>
+                        <input type="number" id="listingCommission" name="listingCommission" value="1" min="0" max="10" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label for="buyerCommission">
+                            Buyer's Agent Commission
+                            <span class="label-hint">(2.5% default)</span>
+                        </label>
+                        <input type="number" id="buyerCommission" name="buyerCommission" value="2.5" min="0" max="10" step="0.1">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Submit Buttons -->
             <button type="submit" class="btn" id="submitBtn">
-                Analyze Properties & Calculate ARV
+                🚀 Analyze Properties
             </button>
+            <button type="button" class="btn reset-btn" onclick="resetToDefaults()">
+                🔄 Reset to Defaults
+            </button>
+
+            <div id="status" class="status"></div>
         </form>
-
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <p style="margin-top: 15px; color: #666;">Calculating area-specific ARV estimates...</p>
-        </div>
-
-        <div class="error-message" id="errorMessage"></div>
-
-        <div class="results" id="results">
-            <div class="result-header">
-                <div class="stat">
-                    <div class="stat-value" id="totalProperties">0</div>
-                    <div class="stat-label">Total Properties</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-value success" id="successCount">0</div>
-                    <div class="stat-label">Analyzed</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-value error-stat" id="failedCount">0</div>
-                    <div class="stat-label">Failed</div>
-                </div>
-            </div>
-
-            <div id="writtenBackStatus"></div>
-
-            <div style="margin-top: 20px; padding: 15px; background: white; border-radius: 8px;">
-                <h3 style="color: #333; margin-bottom: 10px;">✓ Analysis Complete</h3>
-                <p style="color: #666;">
-                    Check your Google Sheet for ARV estimates in columns X, Y, Z, AA, and AB.
-                    Use the <strong>Moderate ARV (column Z)</strong> for your baseline analysis.
-                </p>
-            </div>
-        </div>
-
-        <div class="api-link">
-            <a href="/docs" target="_blank">View API Documentation</a> |
-            <a href="/sheets/health" target="_blank">Check System Health</a>
-        </div>
     </div>
 
     <script>
-        const form = document.getElementById('predictionForm');
-        const loading = document.getElementById('loading');
-        const results = document.getElementById('results');
-        const errorMessage = document.getElementById('errorMessage');
-        const submitBtn = document.getElementById('submitBtn');
+        function resetToDefaults() {
+            document.getElementById('repairCostPerSqft').value = 45;
+            document.getElementById('holdTimeMonths').value = 5;
+            document.getElementById('monthlyMaintenance').value = 150;
+            document.getElementById('monthlyInsurance').value = 100;
+            document.getElementById('monthlyUtilities').value = 150;
+            document.getElementById('interestRate').value = 10;
+            document.getElementById('loanPoints').value = 1;
+            document.getElementById('loanToValue').value = 90;
+            document.getElementById('propertyTaxRate').value = 1.2;
+            document.getElementById('closingCostsBuy').value = 1;
+            document.getElementById('closingCostsSell').value = 1;
+            document.getElementById('sellerCredit').value = 3;
+            document.getElementById('stagingCost').value = 2000;
+            document.getElementById('listingCommission').value = 1;
+            document.getElementById('buyerCommission').value = 2.5;
+            showStatus('Parameters reset to defaults', 'success');
+        }
 
-        form.addEventListener('submit', async (e) => {
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+        }
+
+        document.getElementById('analysisForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
-            // Hide previous results
-            results.classList.remove('active');
-            errorMessage.classList.remove('active');
-
-            // Show loading
-            loading.classList.add('active');
-            submitBtn.disabled = true;
-
-            // Get form data
-            const formData = {
-                sheet_url: document.getElementById('sheetUrl').value,
-                write_back: document.getElementById('writeBack').checked,
-                start_row: 2
+            const formData = new FormData(e.target);
+            const data = {
+                sheet_url: formData.get('sheetUrl'),
+                start_row: parseInt(formData.get('startRow')),
+                write_back: true,
+                parameters: {
+                    repair_cost_per_sqft: parseFloat(formData.get('repairCostPerSqft')),
+                    hold_time_months: parseInt(formData.get('holdTimeMonths')),
+                    interest_rate_annual: parseFloat(formData.get('interestRate')) / 100,
+                    loan_points: parseFloat(formData.get('loanPoints')) / 100,
+                    loan_to_cost_ratio: parseFloat(formData.get('loanToValue')) / 100,
+                    monthly_hoa_maintenance: parseFloat(formData.get('monthlyMaintenance')),
+                    monthly_insurance: parseFloat(formData.get('monthlyInsurance')),
+                    monthly_utilities: parseFloat(formData.get('monthlyUtilities')),
+                    property_tax_rate_annual: parseFloat(formData.get('propertyTaxRate')) / 100,
+                    closing_costs_buy_percent: parseFloat(formData.get('closingCostsBuy')) / 100,
+                    closing_costs_sell_percent: parseFloat(formData.get('closingCostsSell')) / 100,
+                    seller_credit_percent: parseFloat(formData.get('sellerCredit')) / 100,
+                    staging_marketing: parseFloat(formData.get('stagingCost')),
+                    listing_commission_rate: parseFloat(formData.get('listingCommission')) / 100,
+                    buyer_commission_rate: parseFloat(formData.get('buyerCommission')) / 100
+                }
             };
+
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = '⏳ Analyzing...';
+            showStatus('Processing your properties... This may take a minute.', 'loading');
 
             try {
                 const response = await fetch('/sheets/predict', {
@@ -368,50 +458,40 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify(formData)
+                    body: JSON.stringify(data)
                 });
 
-                const data = await response.json();
+                const result = await response.json();
 
-                if (!response.ok) {
-                    throw new Error(data.detail || 'Failed to process predictions');
+                if (response.ok) {
+                    showStatus(
+                        `✅ Success! Analyzed ${result.successful_predictions} properties. ` +
+                        `Failed: ${result.failed_predictions}. Results written to columns X-BP.`,
+                        'success'
+                    );
+                } else {
+                    showStatus(`❌ Error: ${result.detail || 'Unknown error occurred'}`, 'error');
                 }
-
-                // Display results
-                displayResults(data);
-
             } catch (error) {
-                console.error('Error:', error);
-                errorMessage.textContent = `Error: ${error.message}`;
-                errorMessage.classList.add('active');
+                showStatus(`❌ Network error: ${error.message}`, 'error');
             } finally {
-                loading.classList.remove('active');
                 submitBtn.disabled = false;
+                submitBtn.textContent = '🚀 Analyze Properties';
             }
         });
 
-        function displayResults(data) {
-            // Update stats
-            document.getElementById('totalProperties').textContent = data.total_properties;
-            document.getElementById('successCount').textContent = data.successful_predictions;
-            document.getElementById('failedCount').textContent = data.failed_predictions;
-
-            // Show write-back status
-            const writtenBackDiv = document.getElementById('writtenBackStatus');
-            if (data.written_back) {
-                writtenBackDiv.innerHTML = `
-                    <div class="success-banner">
-                        ✓ Results written back to sheet!<br>
-                        <strong>Columns:</strong> X (Deal Status), Y (Conservative ARV), Z (Moderate ARV), AA (Aggressive ARV), AB (Confidence)
-                    </div>
-                `;
-            } else {
-                writtenBackDiv.innerHTML = '<p style="color: #666; font-size: 0.9em;">Results not written back to sheet</p>';
+        // Load saved values from localStorage on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedSheetUrl = localStorage.getItem('sheetUrl');
+            if (savedSheetUrl) {
+                document.getElementById('sheetUrl').value = savedSheetUrl;
             }
+        });
 
-            // Show results
-            results.classList.add('active');
-        }
+        // Save sheet URL to localStorage when changed
+        document.getElementById('sheetUrl').addEventListener('blur', (e) => {
+            localStorage.setItem('sheetUrl', e.target.value);
+        });
     </script>
 </body>
 </html>

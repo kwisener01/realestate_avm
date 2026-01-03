@@ -184,6 +184,25 @@ class ErrorResponse(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
+class FlipCalculatorParameters(BaseModel):
+    """Optional flip calculator parameters for customizing deal analysis"""
+    repair_cost_per_sqft: Optional[float] = Field(45, ge=0, description="Repair cost per square foot")
+    hold_time_months: Optional[int] = Field(5, ge=1, description="Expected hold time in months")
+    interest_rate_annual: Optional[float] = Field(0.10, ge=0, le=1, description="Annual interest rate (0.10 = 10%)")
+    loan_points: Optional[float] = Field(0.01, ge=0, le=1, description="Loan origination points (0.01 = 1%)")
+    loan_to_cost_ratio: Optional[float] = Field(0.90, ge=0, le=1, description="Loan to cost ratio (0.90 = 90%)")
+    monthly_hoa_maintenance: Optional[float] = Field(150, ge=0, description="Monthly HOA/maintenance costs")
+    monthly_insurance: Optional[float] = Field(100, ge=0, description="Monthly insurance costs")
+    monthly_utilities: Optional[float] = Field(150, ge=0, description="Monthly utility costs")
+    property_tax_rate_annual: Optional[float] = Field(0.012, ge=0, le=1, description="Annual property tax rate (0.012 = 1.2%)")
+    closing_costs_buy_percent: Optional[float] = Field(0.01, ge=0, le=1, description="Closing costs on purchase (0.01 = 1%)")
+    closing_costs_sell_percent: Optional[float] = Field(0.01, ge=0, le=1, description="Closing costs on sale (0.01 = 1%)")
+    seller_credit_percent: Optional[float] = Field(0.03, ge=0, le=1, description="Seller credit percentage (0.03 = 3%)")
+    staging_marketing: Optional[float] = Field(2000, ge=0, description="Staging and marketing costs")
+    listing_commission_rate: Optional[float] = Field(0.01, ge=0, le=1, description="Listing agent commission (0.01 = 1%)")
+    buyer_commission_rate: Optional[float] = Field(0.025, ge=0, le=1, description="Buyer's agent commission (0.025 = 2.5%)")
+
+
 class GoogleSheetsRequest(BaseModel):
     """Request for processing properties from Google Sheets"""
     sheet_url: str = Field(..., description="Google Sheets URL or Sheet ID")
@@ -192,6 +211,7 @@ class GoogleSheetsRequest(BaseModel):
     write_back: bool = Field(True, description="Write predictions back to the sheet")
     use_ensemble: bool = Field(True, description="Use ensemble model for predictions")
     credentials_path: Optional[str] = Field(None, description="Path to Google service account credentials JSON")
+    parameters: Optional[FlipCalculatorParameters] = Field(None, description="Custom flip calculator parameters")
 
     class Config:
         schema_extra = {
@@ -201,7 +221,12 @@ class GoogleSheetsRequest(BaseModel):
                 "start_row": 2,
                 "write_back": True,
                 "use_ensemble": True,
-                "credentials_path": None
+                "credentials_path": None,
+                "parameters": {
+                    "repair_cost_per_sqft": 45,
+                    "hold_time_months": 5,
+                    "interest_rate_annual": 0.10
+                }
             }
         }
 
