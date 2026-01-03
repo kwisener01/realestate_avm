@@ -330,6 +330,8 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
         col_assessed = find_column(header_row, ['total assessed value', 'assessed value', 'tax assessed value'])
         col_sqft = find_column(header_row, ['building sqft', 'sqft', 'square feet', 'sq ft', 'sqft living', 'square footage'])
         col_address = find_column(header_row, ['address', 'street address', 'property address'])
+        col_bedrooms = find_column(header_row, ['bedrooms', 'beds', 'bed', 'br'])
+        col_bathrooms = find_column(header_row, ['bathrooms', 'baths', 'bath', 'ba'])
 
         # Verify we have required columns
         missing_cols = []
@@ -373,6 +375,15 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
             list_price = clean_price(row[col_list_price]) if col_list_price < len(row) else None
             days_on_market = safe_int(row[col_dom]) if col_dom is not None and col_dom < len(row) else 0
             assessed_value = clean_price(row[col_assessed]) if col_assessed is not None and col_assessed < len(row) else None
+            bedrooms = safe_int(row[col_bedrooms], None) if col_bedrooms is not None and col_bedrooms < len(row) else None
+            bathrooms = None
+            if col_bathrooms is not None and col_bathrooms < len(row):
+                try:
+                    bath_val = str(row[col_bathrooms]).strip()
+                    if bath_val:
+                        bathrooms = float(bath_val.replace(',', ''))
+                except:
+                    bathrooms = None
 
             # Skip if no list price
             if not list_price or list_price <= 0:
@@ -469,8 +480,13 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
                     try:
                         address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else None
-                        print(f"  Fetching Rentcast value for {address}, {city}")
-                        market_value = rentcast.get_value_estimate(address, city, "GA", zipcode) if address else None
+                        print(f"  Fetching Rentcast value for {address}, {city} (sqft={sqft}, beds={bedrooms}, baths={bathrooms})")
+                        market_value = rentcast.get_value_estimate(
+                            address, city, "GA", zipcode,
+                            square_footage=sqft,
+                            bedrooms=bedrooms,
+                            bathrooms=bathrooms
+                        ) if address else None
 
                         if market_value:
                             value_vs_arv = market_value - arv_needed
@@ -492,7 +508,12 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                             if deal_status == "GOOD DEAL":
                                 print(f"  Fetching comps for GOOD DEAL property")
                                 try:
-                                    property_data = rentcast.get_property_data(address, city, "GA", zipcode)
+                                    property_data = rentcast.get_property_data(
+                                        address, city, "GA", zipcode,
+                                        square_footage=sqft,
+                                        bedrooms=bedrooms,
+                                        bathrooms=bathrooms
+                                    )
                                     if property_data and 'comparables' in property_data:
                                         comps = property_data['comparables'][:3]  # Top 3 comps
                                         for i, comp in enumerate(comps):
@@ -537,8 +558,12 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     address = str(row[col_address]).strip()
                     if address:
                         try:
-                            print(f"  Fetching sqft from Rentcast for {address}")
-                            property_data = rentcast.get_property_data(address, city, "GA", zipcode)
+                            print(f"  Fetching sqft from Rentcast for {address} (beds={bedrooms}, baths={bathrooms})")
+                            property_data = rentcast.get_property_data(
+                                address, city, "GA", zipcode,
+                                bedrooms=bedrooms,
+                                bathrooms=bathrooms
+                            )
                             if property_data and 'squareFootage' in property_data:
                                 sqft = int(property_data['squareFootage'])
                                 sqft_source = "Rentcast"
@@ -598,7 +623,12 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                         # Get Rentcast value and comps
                         arv_needed = flip_result.recommended_arv_for_profit
                         try:
-                            market_value = rentcast.get_value_estimate(address, city, "GA", zipcode)
+                            market_value = rentcast.get_value_estimate(
+                                address, city, "GA", zipcode,
+                                square_footage=sqft,
+                                bedrooms=bedrooms,
+                                bathrooms=bathrooms
+                            )
                             if market_value:
                                 value_vs_arv = market_value - arv_needed
                                 value_supports = "YES" if market_value >= arv_needed else "NO"
@@ -615,7 +645,12 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                                 comp_cols = ["", "", ""]
                                 if deal_status == "GOOD DEAL":
                                     try:
-                                        property_data = rentcast.get_property_data(address, city, "GA", zipcode)
+                                        property_data = rentcast.get_property_data(
+                                            address, city, "GA", zipcode,
+                                            square_footage=sqft,
+                                            bedrooms=bedrooms,
+                                            bathrooms=bathrooms
+                                        )
                                         if property_data and 'comparables' in property_data:
                                             comps = property_data['comparables'][:3]
                                             for i, comp in enumerate(comps):

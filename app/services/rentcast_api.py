@@ -10,15 +10,35 @@ class RentcastAPIService:
         self.api_key = api_key or os.getenv('RENTCAST_API_KEY', '09941f5d40cc4eb896e8322c691ed644')
         self.base_url = "https://api.rentcast.io/v1"
 
-    def get_value_estimate(self, address: str, city: str = None, state: str = "GA", zipcode: str = None) -> Optional[float]:
+    def get_value_estimate(
+        self,
+        address: str,
+        city: str = None,
+        state: str = "GA",
+        zipcode: str = None,
+        property_type: str = "Single Family",
+        bedrooms: Optional[int] = None,
+        bathrooms: Optional[float] = None,
+        square_footage: Optional[int] = None,
+        max_radius: float = 3.0,
+        days_old: int = 180,
+        comp_count: int = 20
+    ) -> Optional[float]:
         """
-        Get property value estimate from Rentcast
+        Get property value estimate from Rentcast with improved accuracy
 
         Args:
             address: Street address
             city: City name
             state: State code (default: "GA")
             zipcode: ZIP code (optional)
+            property_type: Property type (default: "Single Family")
+            bedrooms: Number of bedrooms (improves accuracy)
+            bathrooms: Number of bathrooms (improves accuracy)
+            square_footage: Square footage (improves accuracy)
+            max_radius: Maximum distance for comps in miles (default: 3.0)
+            days_old: Maximum age of comps in days (default: 180)
+            comp_count: Number of comps to use (default: 20)
 
         Returns:
             Property value estimate as float, or None if not available
@@ -35,8 +55,20 @@ class RentcastAPIService:
             }
 
             params = {
-                'address': full_address
+                'address': full_address,
+                'propertyType': property_type,
+                'maxRadius': max_radius,
+                'daysOld': days_old,
+                'compCount': comp_count
             }
+
+            # Add property attributes if provided (increases accuracy)
+            if bedrooms is not None:
+                params['bedrooms'] = bedrooms
+            if bathrooms is not None:
+                params['bathrooms'] = bathrooms
+            if square_footage is not None and square_footage > 0:
+                params['squareFootage'] = square_footage
 
             response = requests.get(
                 f"{self.base_url}/avm/value",
@@ -65,15 +97,35 @@ class RentcastAPIService:
             print(f"Error fetching from Rentcast API: {e}")
             return None
 
-    def get_property_data(self, address: str, city: str = None, state: str = "GA", zipcode: str = None) -> Optional[Dict]:
+    def get_property_data(
+        self,
+        address: str,
+        city: str = None,
+        state: str = "GA",
+        zipcode: str = None,
+        property_type: str = "Single Family",
+        bedrooms: Optional[int] = None,
+        bathrooms: Optional[float] = None,
+        square_footage: Optional[int] = None,
+        max_radius: float = 3.0,
+        days_old: int = 180,
+        comp_count: int = 20
+    ) -> Optional[Dict]:
         """
-        Get full property data from Rentcast including comps
+        Get full property data from Rentcast including comps with improved accuracy
 
         Args:
             address: Street address
             city: City name
             state: State code (default: "GA")
             zipcode: ZIP code (optional)
+            property_type: Property type (default: "Single Family")
+            bedrooms: Number of bedrooms (improves accuracy)
+            bathrooms: Number of bathrooms (improves accuracy)
+            square_footage: Square footage (improves accuracy)
+            max_radius: Maximum distance for comps in miles (default: 3.0)
+            days_old: Maximum age of comps in days (default: 180)
+            comp_count: Number of comps to use (default: 20)
 
         Returns:
             Complete property data dict with value, comparables, etc., or None if not available
@@ -90,8 +142,20 @@ class RentcastAPIService:
             }
 
             params = {
-                'address': full_address
+                'address': full_address,
+                'propertyType': property_type,
+                'maxRadius': max_radius,
+                'daysOld': days_old,
+                'compCount': comp_count
             }
+
+            # Add property attributes if provided (increases accuracy)
+            if bedrooms is not None:
+                params['bedrooms'] = bedrooms
+            if bathrooms is not None:
+                params['bathrooms'] = bathrooms
+            if square_footage is not None and square_footage > 0:
+                params['squareFootage'] = square_footage
 
             response = requests.get(
                 f"{self.base_url}/avm/value",
