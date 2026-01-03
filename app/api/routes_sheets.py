@@ -19,7 +19,7 @@ from app.models.property_models import (
 )
 from app.models.flip_calculator_models import FlipCalculatorInput
 from app.services.flip_calculator import calculate_flip_deal
-from app.services.zillow_api import ZillowAPIService
+from app.services.rentcast_api import RentcastAPIService
 
 router = APIRouter(prefix="/sheets", tags=["google-sheets"])
 
@@ -345,8 +345,8 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
             detail=f"Failed to read sheet data: {str(e)}"
         )
 
-    # Initialize Zillow API service
-    zillow = ZillowAPIService()
+    # Initialize Rentcast API service
+    rentcast = RentcastAPIService()
 
     # Process each row and calculate area-specific ARV
     successful = 0
@@ -451,53 +451,53 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                         f"${flip_result.recommended_arv_for_profit:,.0f}",
                     ]
 
-                    # Fetch Zestimate and create comparison columns
-                    # Always show ARV_Needed even if Zestimate fails
+                    # Fetch Rentcast value estimate and create comparison columns
+                    # Always show ARV_Needed even if Rentcast fails
                     arv_needed = flip_result.recommended_arv_for_profit
 
                     try:
                         address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else None
-                        print(f"  Fetching Zestimate for {address}, {city}")
-                        zestimate = zillow.get_zestimate(address, city, "GA") if address else None
+                        print(f"  Fetching Rentcast value for {address}, {city}")
+                        market_value = rentcast.get_value_estimate(address, city, "GA", zipcode) if address else None
 
-                        if zestimate:
-                            zest_vs_arv = zestimate - arv_needed
-                            zest_supports = "YES" if zestimate >= arv_needed else "NO"
+                        if market_value:
+                            value_vs_arv = market_value - arv_needed
+                            value_supports = "YES" if market_value >= arv_needed else "NO"
 
                             # Determine deal status
-                            if zestimate >= arv_needed * 1.05:  # 5% cushion
+                            if market_value >= arv_needed * 1.05:  # 5% cushion
                                 deal_status = "GOOD DEAL"
-                            elif zestimate >= arv_needed:
+                            elif market_value >= arv_needed:
                                 deal_status = "MAYBE"
                             else:
                                 deal_status = "NO DEAL"
 
-                            zestimate_cols = [
+                            value_cols = [
                                 deal_status,
-                                f"${zestimate:,.0f}",
+                                f"${market_value:,.0f}",
                                 f"${arv_needed:,.0f}",
-                                f"${zest_vs_arv:,.0f}",
-                                zest_supports
+                                f"${value_vs_arv:,.0f}",
+                                value_supports
                             ]
                         else:
-                            print(f"  Zestimate not available")
-                            zestimate_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A"]
+                            print(f"  Rentcast value not available")
+                            value_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A"]
                     except Exception as e:
-                        print(f"  Error fetching Zestimate: {e}")
-                        zestimate_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A"]
+                        print(f"  Error fetching Rentcast value: {e}")
+                        value_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A"]
 
                 except Exception as e:
                     print(f"Error calculating flip for row {idx}: {e}")
-                    # Add empty columns if error (5 zest + 2 sqft + 30 flip = 37)
-                    zestimate_cols = ["ERROR", "", "", "", ""]
+                    # Add empty columns if error (5 value + 2 sqft + 30 flip = 37)
+                    value_cols = ["ERROR", "", "", "", ""]
                     flip_results = ["", "", "ERROR"] + [""] * 29
             else:
-                # No sqft data - add empty columns (5 zest + 2 sqft + 30 flip = 37)
-                zestimate_cols = ["NO SQFT", "N/A", "N/A", "N/A", "N/A"]
+                # No sqft data - add empty columns (5 value + 2 sqft + 30 flip = 37)
+                value_cols = ["NO SQFT", "N/A", "N/A", "N/A", "N/A"]
                 flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 29
 
-            # Format output (5 zestimate + 2 sqft + 30 flip = 37 total)
-            results_to_write.append(zestimate_cols + flip_results)
+            # Format output (5 market value + 2 sqft + 30 flip = 37 total)
+            results_to_write.append(value_cols + flip_results)
 
         except Exception as e:
             failed += 1
@@ -509,13 +509,13 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     written_back = False
     if request.write_back and results_to_write:
         try:
-            # Write to columns X through BM (37 columns: 5 zest + 2 sqft + 30 flip)
+            # Write to columns X through BM (37 columns: 5 value + 2 sqft + 30 flip)
             # First, add/update header row
             header_row_num = request.start_row - 1
             if header_row_num >= 1:
                 headers = [
-                    # Zestimate comparison columns (X-AB)
-                    'Deal_Status', 'Zestimate', 'ARV_Needed', 'Zestimate_vs_ARV_Needed', 'Zestimate_Supports_Deal',
+                    # Market value comparison columns (X-AB)
+                    'Deal_Status', 'Market_Value', 'ARV_Needed', 'Market_Value_vs_ARV', 'Market_Supports_Deal',
                     # Sqft info columns (AC-AD)
                     'Sqft_Used', 'Sqft_Source',
                     # Flip calculator columns (AE-BM)
