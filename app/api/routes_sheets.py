@@ -19,6 +19,7 @@ from app.models.property_models import (
 )
 from app.models.flip_calculator_models import FlipCalculatorInput
 from app.services.flip_calculator import calculate_flip_deal
+from app.services.county_assessor_lookup import lookup_sqft_from_assessor
 
 router = APIRouter(prefix="/sheets", tags=["google-sheets"])
 
@@ -313,6 +314,8 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
         col_assessed = find_column(header_row, ['total assessed value', 'assessed value', 'tax assessed value'])
         col_sqft = find_column(header_row, ['building sqft', 'sqft', 'square feet', 'sq ft', 'sqft living'])
         col_address = find_column(header_row, ['address', 'street address', 'property address'])
+        col_county = find_column(header_row, ['county'])
+        col_parcel = find_column(header_row, ['apn', 'parcel number', 'parcel', 'parcel id'])
 
         # Verify we have required columns
         missing_cols = []
@@ -413,73 +416,94 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
             # Calculate flip deal if sqft available
             flip_results = []
+
+            # Try to get sqft from sheet first
+            sqft = 0
             if col_sqft is not None and col_sqft < len(row):
                 sqft = safe_int(row[col_sqft], 0)
-                if sqft > 0:
-                    try:
-                        # Get address if available
-                        address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else "Property"
 
-                        # Create flip calculator input
-                        flip_input = FlipCalculatorInput(
-                            property_address=address,
-                            city=city or "",
-                            zip_code=zipcode or "00000",
-                            sqft_living=sqft,
-                            purchase_price=list_price,
-                            arv=arv_moderate,  # Use moderate ARV
-                            hold_time_months=5
-                        )
+            # If sqft missing, try county assessor lookup
+            if sqft == 0 and col_county is not None:
+                try:
+                    # Get address, county, and parcel for lookup
+                    address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else None
+                    county = str(row[col_county]).strip() if col_county < len(row) and row[col_county] else None
+                    parcel = str(row[col_parcel]).strip() if col_parcel is not None and col_parcel < len(row) and row[col_parcel] else None
 
-                        # Calculate flip deal
-                        flip_result = calculate_flip_deal(flip_input)
+                    if address and county:
+                        print(f"  Attempting assessor lookup for {address}, {county} County")
+                        looked_up_sqft = lookup_sqft_from_assessor(address, city or "", county, parcel)
+                        if looked_up_sqft:
+                            sqft = looked_up_sqft
+                            print(f"  ✓ Found sqft from assessor: {sqft}")
+                        else:
+                            print(f"  ✗ Assessor lookup returned no sqft")
+                except Exception as e:
+                    print(f"  Error in assessor lookup: {e}")
 
-                        # Format flip results (30 columns)
-                        flip_results = [
-                            # Quick indicators
-                            "YES" if flip_result.profit_analysis.is_profitable else "NO",
-                            "YES" if flip_result.profit_analysis.meets_minimum_roi else "NO",
-                            "YES" if flip_result.profit_analysis.meets_70_percent_rule else "NO",
-                            f"{flip_result.profit_analysis.roi_percent:.1f}%",
-                            f"${flip_result.profit_analysis.gross_profit:,.0f}",
-                            f"{flip_result.profit_analysis.profit_margin_percent:.1f}%",
-                            # Key numbers
-                            f"${flip_result.acquisition.purchase_price:,.0f}",
-                            f"${flip_result.arv:,.0f}",
-                            f"${flip_result.profit_analysis.total_all_costs:,.0f}",
-                            f"${flip_result.profit_analysis.cash_needed:,.0f}",
-                            f"${flip_result.max_offer_70_rule:,.0f}",
-                            # Cost breakdowns
-                            f"${flip_result.acquisition.total_acquisition:,.0f}",
-                            f"${flip_result.renovation.total_renovation:,.0f}",
-                            f"${flip_result.holding.total_holding:,.0f}",
-                            f"${flip_result.selling.total_selling:,.0f}",
-                            # Detailed costs
-                            f"${flip_result.renovation.repair_cost:,.0f}",
-                            f"${flip_result.acquisition.closing_costs:,.0f}",
-                            f"${flip_result.renovation.monthly_maintenance_total:,.0f}",
-                            f"${flip_result.holding.loan_amount:,.0f}",
-                            f"${flip_result.holding.interest_payment:,.0f}",
-                            f"${flip_result.holding.loan_origination_points:,.0f}",
-                            f"${flip_result.holding.property_tax_prorated:,.0f}",
-                            f"${flip_result.holding.insurance_total:,.0f}",
-                            f"${flip_result.holding.utilities_total:,.0f}",
-                            f"${flip_result.selling.staging_marketing:,.0f}",
-                            f"${flip_result.selling.closing_costs:,.0f}",
-                            f"${flip_result.selling.seller_credit:,.0f}",
-                            f"${flip_result.selling.listing_commission:,.0f}",
-                            f"${flip_result.selling.buyer_commission:,.0f}",
-                            f"${flip_result.recommended_arv_for_profit:,.0f}",
-                        ]
-                    except Exception as e:
-                        print(f"Error calculating flip for row {idx}: {e}")
-                        # Add empty flip columns if error
-                        flip_results = ["ERROR"] + [""] * 29
-                else:
-                    # No sqft data - add empty flip columns
-                    flip_results = ["N/A - No Sqft"] + [""] * 29
+            # Now process flip calculator if we have sqft
+            if sqft > 0:
+                try:
+                    # Get address if available
+                    address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else "Property"
+
+                    # Create flip calculator input
+                    flip_input = FlipCalculatorInput(
+                        property_address=address,
+                        city=city or "",
+                        zip_code=zipcode or "00000",
+                        sqft_living=sqft,
+                        purchase_price=list_price,
+                        arv=arv_moderate,  # Use moderate ARV
+                        hold_time_months=5
+                    )
+
+                    # Calculate flip deal
+                    flip_result = calculate_flip_deal(flip_input)
+
+                    # Format flip results (30 columns)
+                    flip_results = [
+                        # Quick indicators
+                        "YES" if flip_result.profit_analysis.is_profitable else "NO",
+                        "YES" if flip_result.profit_analysis.meets_minimum_roi else "NO",
+                        "YES" if flip_result.profit_analysis.meets_70_percent_rule else "NO",
+                        f"{flip_result.profit_analysis.roi_percent:.1f}%",
+                        f"${flip_result.profit_analysis.gross_profit:,.0f}",
+                        f"{flip_result.profit_analysis.profit_margin_percent:.1f}%",
+                        # Key numbers
+                        f"${flip_result.acquisition.purchase_price:,.0f}",
+                        f"${flip_result.arv:,.0f}",
+                        f"${flip_result.profit_analysis.total_all_costs:,.0f}",
+                        f"${flip_result.profit_analysis.cash_needed:,.0f}",
+                        f"${flip_result.max_offer_70_rule:,.0f}",
+                        # Cost breakdowns
+                        f"${flip_result.acquisition.total_acquisition:,.0f}",
+                        f"${flip_result.renovation.total_renovation:,.0f}",
+                        f"${flip_result.holding.total_holding:,.0f}",
+                        f"${flip_result.selling.total_selling:,.0f}",
+                        # Detailed costs
+                        f"${flip_result.renovation.repair_cost:,.0f}",
+                        f"${flip_result.acquisition.closing_costs:,.0f}",
+                        f"${flip_result.renovation.monthly_maintenance_total:,.0f}",
+                        f"${flip_result.holding.loan_amount:,.0f}",
+                        f"${flip_result.holding.interest_payment:,.0f}",
+                        f"${flip_result.holding.loan_origination_points:,.0f}",
+                        f"${flip_result.holding.property_tax_prorated:,.0f}",
+                        f"${flip_result.holding.insurance_total:,.0f}",
+                        f"${flip_result.holding.utilities_total:,.0f}",
+                        f"${flip_result.selling.staging_marketing:,.0f}",
+                        f"${flip_result.selling.closing_costs:,.0f}",
+                        f"${flip_result.selling.seller_credit:,.0f}",
+                        f"${flip_result.selling.listing_commission:,.0f}",
+                        f"${flip_result.selling.buyer_commission:,.0f}",
+                        f"${flip_result.recommended_arv_for_profit:,.0f}",
+                    ]
+                except Exception as e:
+                    print(f"Error calculating flip for row {idx}: {e}")
+                    # Add empty flip columns if error
+                    flip_results = ["ERROR"] + [""] * 29
             else:
-                # No sqft column - add empty flip columns
+                # No sqft data - add empty flip columns
                 flip_results = ["N/A - No Sqft"] + [""] * 29
 
             # Format output (5 ARV columns + 30 flip columns = 35 total)
