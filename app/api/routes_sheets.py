@@ -481,11 +481,16 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                                     if property_data and 'comparables' in property_data:
                                         comps = property_data['comparables'][:3]  # Top 3 comps
                                         for i, comp in enumerate(comps):
-                                            # Format: Address | $Price | Date
-                                            comp_address = comp.get('address', 'N/A')
+                                            # Format: Address | $Price | Date | Sqft
+                                            comp_address = comp.get('formattedAddress', comp.get('addressLine1', 'N/A'))
                                             comp_price = comp.get('price', 0)
-                                            comp_date = comp.get('saleDate', 'N/A')
-                                            comp_cols[i] = f"{comp_address} | ${comp_price:,.0f} | {comp_date}"
+                                            comp_date = comp.get('lastSeenDate', comp.get('listedDate', 'N/A'))
+                                            comp_sqft = comp.get('squareFootage', 'N/A')
+                                            comp_beds = comp.get('bedrooms', '')
+                                            comp_baths = comp.get('bathrooms', '')
+
+                                            # Format: Address | $Price | Date | Beds/Baths | Sqft
+                                            comp_cols[i] = f"{comp_address} | ${comp_price:,.0f} | {comp_date} | {comp_beds}bd/{comp_baths}ba | {comp_sqft}sf"
                                 except Exception as e:
                                     print(f"  Error fetching comps: {e}")
 
