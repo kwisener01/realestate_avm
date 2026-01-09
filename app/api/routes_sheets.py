@@ -275,6 +275,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     - **Days On Market** (or DOM) - Days listed
 
     Optional columns (will be included in analysis but not required):
+    - **Zillow URL** (or Zillow Link, URL, Property URL) - Direct Zillow property URL with ZPID (recommended for accurate Zestimate)
     - Street Number, Street Name, Address
     - Parcel Number, County Code, MLS #
     - Owner info, Agent info, etc.
@@ -284,7 +285,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     Writes 8 columns to the sheet (columns X through AE):
 
     **Zestimate & ARV Analysis:**
-    - **X: Zestimate** - Zillow property valuation
+    - **X: Zestimate** - Zillow property valuation (from API if URL provided, otherwise defaults to list price)
     - **Y: ARV (80%)** - After Repair Value = Zestimate × 0.80
     - **Z: ARV Needed** - ARV needed for 20% ROI from flip calculator
     - **AA: Deal Status** - GOOD DEAL, MAYBE, or NO DEAL (based on ARV 80% vs ARV Needed)
@@ -392,6 +393,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
         col_address = find_column(header_row, ['address', 'street address', 'property address'])
         col_bedrooms = find_column(header_row, ['bedrooms', 'beds', 'bed', 'br'])
         col_bathrooms = find_column(header_row, ['bathrooms', 'baths', 'bath', 'ba'])
+        col_zillow_url = find_column(header_row, ['zillow url', 'zillow link', 'url', 'property url', 'zillow'])
 
         # Verify we have required columns
         missing_cols = []
@@ -509,25 +511,35 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
             if col_sqft is not None and col_sqft < len(row):
                 sqft = safe_int(row[col_sqft], 0)
 
-            # Get address for API calls
+            # Get address and Zillow URL for API calls
             address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else None
+            zillow_url_from_sheet = str(row[col_zillow_url]).strip() if col_zillow_url is not None and col_zillow_url < len(row) and row[col_zillow_url] else None
 
-            # Fetch Zestimate from Zillow (simplified - no comps needed)
+            # Fetch Zestimate from Zillow (use URL with ZPID if available, otherwise construct)
             zestimate = None
-            if address:
+            if address or zillow_url_from_sheet:
                 try:
-                    print(f"  Fetching Zestimate from Zillow for {address}, {city}")
+                    if zillow_url_from_sheet:
+                        print(f"  Fetching Zestimate using Zillow URL: {zillow_url_from_sheet[:50]}...")
+                    else:
+                        print(f"  Fetching Zestimate from Zillow for {address}, {city}")
+
                     zestimate = zillow.get_value_estimate(
-                        address, city, "GA", zipcode,
+                        address or "Unknown", city, "GA", zipcode,
                         square_footage=sqft if sqft > 0 else None,
                         bedrooms=bedrooms,
-                        bathrooms=bathrooms
+                        bathrooms=bathrooms,
+                        zillow_url=zillow_url_from_sheet
                     )
                     if zestimate:
                         print(f"  Retrieved Zestimate: ${zestimate:,.0f}")
+                    else:
+                        print(f"  Zestimate not available, defaulting to list price: ${list_price:,.0f}")
+                        zestimate = list_price  # Default to list price if Zestimate unavailable
 
                 except Exception as e:
-                    print(f"  Error fetching Zestimate from Zillow: {e}")
+                    print(f"  Error fetching Zestimate from Zillow: {e}, defaulting to list price")
+                    zestimate = list_price  # Default to list price on error
 
             # Calculate flip deal if we have sqft
             flip_results = []

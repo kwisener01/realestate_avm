@@ -106,6 +106,7 @@ class ZillowAPIService:
         bedrooms: Optional[int] = None,
         bathrooms: Optional[float] = None,
         square_footage: Optional[int] = None,
+        zillow_url: str = None,
         **kwargs
     ) -> Optional[float]:
         """
@@ -120,12 +121,17 @@ class ZillowAPIService:
             bedrooms: Number of bedrooms (not used by Zillow scraper)
             bathrooms: Number of bathrooms (not used by Zillow scraper)
             square_footage: Square footage (not used by Zillow scraper)
+            zillow_url: Direct Zillow URL (with ZPID) - if provided, uses this instead of constructing
             **kwargs: Additional parameters (for compatibility)
 
         Returns:
             Zestimate value as float, or None if not available
         """
-        property_data = self.get_property_by_address(address, city, state, zipcode)
+        # If zillow_url is provided directly, use it
+        if zillow_url and zillow_url.strip():
+            property_data = self._make_request(zillow_url.strip())
+        else:
+            property_data = self.get_property_by_address(address, city, state, zipcode)
 
         if not property_data:
             return None
