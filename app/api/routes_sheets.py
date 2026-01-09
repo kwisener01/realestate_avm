@@ -395,6 +395,11 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
         col_bathrooms = find_column(header_row, ['bathrooms', 'baths', 'bath', 'ba'])
         col_zillow_url = find_column(header_row, ['zillow url', 'zillow link', 'url', 'property url', 'zillow'])
 
+        # Address component columns (for combining into full address)
+        col_street_number = find_column(header_row, ['street number', 'street #', 'number', 'house number'])
+        col_street_name = find_column(header_row, ['street name', 'street'])
+        col_street_suffix = find_column(header_row, ['street suffix', 'street type', 'suffix', 'type'])
+
         # Verify we have required columns
         missing_cols = []
         if col_city is None:
@@ -512,7 +517,21 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                 sqft = safe_int(row[col_sqft], 0)
 
             # Get address and Zillow URL for API calls
-            address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else None
+            address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) and row[col_address] else None
+
+            # If no complete address column, try to build from components (columns D, E, H)
+            if not address and col_street_number is not None and col_street_name is not None:
+                street_number = str(row[col_street_number]).strip() if col_street_number < len(row) and row[col_street_number] else ""
+                street_name = str(row[col_street_name]).strip() if col_street_name < len(row) and row[col_street_name] else ""
+                street_suffix = str(row[col_street_suffix]).strip() if col_street_suffix is not None and col_street_suffix < len(row) and row[col_street_suffix] else ""
+
+                # Combine components to create full address
+                address_parts = [street_number, street_name, street_suffix]
+                address = " ".join([part for part in address_parts if part])
+
+                if address:
+                    print(f"  Combined address from components: {address}")
+
             zillow_url_from_sheet = str(row[col_zillow_url]).strip() if col_zillow_url is not None and col_zillow_url < len(row) and row[col_zillow_url] else None
 
             # Fetch Zestimate from Zillow (use URL with ZPID if available, otherwise construct)
