@@ -151,42 +151,40 @@ class ZillowAPIService:
         try:
             print(f"  Attempting to extract Zestimate from response...")
 
-            # Common Zillow scraper response patterns:
+            # HasData API specific structure: data is nested under 'property' key
+            if 'property' in property_data and isinstance(property_data['property'], dict):
+                prop = property_data['property']
+
+                # First try to get Zestimate (preferred)
+                if 'zestimate' in prop and prop['zestimate']:
+                    value = float(prop['zestimate'])
+                    print(f"  ✅ Found Zestimate in property: ${value:,.0f}")
+                    return value
+
+                # Fall back to list price if no Zestimate
+                if 'price' in prop and prop['price']:
+                    value = float(prop['price'])
+                    print(f"  ✅ Found list price in property (no Zestimate): ${value:,.0f}")
+                    return value
+
+            # Legacy fallback: try root level (for other APIs or response formats)
             if 'zestimate' in property_data:
                 value = float(property_data['zestimate'])
-                print(f"  Found Zestimate in root: ${value:,.0f}")
+                print(f"  ✅ Found Zestimate in root: ${value:,.0f}")
                 return value
             elif 'price' in property_data:
                 value = float(property_data['price'])
-                print(f"  Found price in root: ${value:,.0f}")
+                print(f"  ✅ Found price in root: ${value:,.0f}")
                 return value
-            elif 'estimatedValue' in property_data:
-                value = float(property_data['estimatedValue'])
-                print(f"  Found estimatedValue in root: ${value:,.0f}")
-                return value
-            else:
-                # Try to find value in nested structure
-                for key in ['data', 'property', 'result', 'propertyDetails']:
-                    if key in property_data and isinstance(property_data[key], dict):
-                        nested = property_data[key]
-                        if 'zestimate' in nested:
-                            value = float(nested['zestimate'])
-                            print(f"  Found Zestimate in {key}: ${value:,.0f}")
-                            return value
-                        if 'price' in nested:
-                            value = float(nested['price'])
-                            print(f"  Found price in {key}: ${value:,.0f}")
-                            return value
-                        if 'estimatedValue' in nested:
-                            value = float(nested['estimatedValue'])
-                            print(f"  Found estimatedValue in {key}: ${value:,.0f}")
-                            return value
 
-                print(f"  WARNING: Could not find Zestimate/price in response structure")
-                print(f"  Available keys: {list(property_data.keys())[:10]}")
+            # If nothing found
+            print(f"  ⚠️  WARNING: Could not find Zestimate or price in response")
+            print(f"  Response keys: {list(property_data.keys())[:10]}")
+            if 'property' in property_data:
+                print(f"  Property keys: {list(property_data['property'].keys())[:15]}")
 
         except (KeyError, ValueError, TypeError) as e:
-            print(f"  ERROR extracting Zestimate: {e}")
+            print(f"  ❌ ERROR extracting Zestimate: {e}")
             return None
 
         return None
