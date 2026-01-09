@@ -5,11 +5,11 @@ from typing import Optional, Dict
 from urllib.parse import quote
 
 class ZillowAPIService:
-    """Service for fetching property data from Zillow scraper API (api.data.com)"""
+    """Service for fetching property data from Zillow scraper API (HasData.com)"""
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv('ZILLOW_API_KEY', '16c519c0-be1f-4e1d-9ff4-76702fc1f43a')
-        self.base_url = "https://api.data.com/scrape/zillow/property"
+        self.base_url = "https://api.hasdata.com/scrape/zillow/property"
 
     def _construct_zillow_url(self, address: str, city: str, state: str, zipcode: str = None) -> str:
         """
@@ -45,15 +45,26 @@ class ZillowAPIService:
                 self.base_url,
                 headers=headers,
                 params=params,
-                timeout=5  # Reduced from 30s - fail fast if API isn't responding
+                timeout=10  # API can be slow, allow 10s
             )
 
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                print(f"API Response received: {str(data)[:100]}...")
+                return data
+            elif response.status_code == 401:
+                print(f"Zillow API authentication error: Invalid API key")
+                return None
+            elif response.status_code == 404:
+                print(f"Zillow API error: Property not found at URL: {zillow_url}")
+                return None
             else:
                 print(f"Zillow API error: {response.status_code} - {response.text[:200]}")
                 return None
 
+        except requests.exceptions.Timeout:
+            print(f"Zillow API timeout after 10s for URL: {zillow_url}")
+            return None
         except Exception as e:
             print(f"Error fetching from Zillow API: {e}")
             return None
