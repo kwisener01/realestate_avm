@@ -517,6 +517,8 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
             # Fetch Zestimate from Zillow (use URL with ZPID if available, otherwise construct)
             zestimate = None
+            zestimate_source = "API"  # Track where Zestimate came from
+
             if address or zillow_url_from_sheet:
                 try:
                     if zillow_url_from_sheet:
@@ -531,15 +533,27 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                         bathrooms=bathrooms,
                         zillow_url=zillow_url_from_sheet
                     )
-                    if zestimate:
-                        print(f"  Retrieved Zestimate: ${zestimate:,.0f}")
-                    else:
-                        print(f"  Zestimate not available, defaulting to list price: ${list_price:,.0f}")
-                        zestimate = list_price  # Default to list price if Zestimate unavailable
 
+                    if zestimate and zestimate > 0:
+                        print(f"  SUCCESS: Retrieved Zestimate from API: ${zestimate:,.0f}")
+                        zestimate_source = "Zillow API"
+                    else:
+                        print(f"  API returned no Zestimate, defaulting to list price: ${list_price:,.0f}")
+                        zestimate = list_price
+                        zestimate_source = "List Price (fallback)"
+
+                except requests.exceptions.Timeout:
+                    print(f"  API timeout, defaulting to list price: ${list_price:,.0f}")
+                    zestimate = list_price
+                    zestimate_source = "List Price (timeout)"
                 except Exception as e:
-                    print(f"  Error fetching Zestimate from Zillow: {e}, defaulting to list price")
-                    zestimate = list_price  # Default to list price on error
+                    print(f"  API error ({type(e).__name__}), defaulting to list price: ${list_price:,.0f}")
+                    zestimate = list_price
+                    zestimate_source = "List Price (error)"
+            else:
+                print(f"  No address or URL available, using list price: ${list_price:,.0f}")
+                zestimate = list_price
+                zestimate_source = "List Price (no address)"
 
             # Calculate flip deal if we have sqft
             flip_results = []

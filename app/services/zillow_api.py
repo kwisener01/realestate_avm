@@ -45,32 +45,42 @@ class ZillowAPIService:
                 'url': zillow_url
             }
 
+            print(f"  Making API request to: {self.base_url}")
+            print(f"  Zillow URL parameter: {zillow_url}")
+
             response = requests.get(
                 self.base_url,
                 headers=headers,
                 params=params,
-                timeout=10  # API can be slow, allow 10s
+                timeout=15  # Increased to 15s - API can be very slow
             )
+
+            print(f"  API Response Status: {response.status_code}")
 
             if response.status_code == 200:
                 data = response.json()
-                print(f"API Response received: {str(data)[:100]}...")
+                print(f"  API Response Keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+                print(f"  API Response Sample: {str(data)[:200]}...")
                 return data
             elif response.status_code == 401:
-                print(f"Zillow API authentication error: Invalid API key")
+                print(f"  ERROR: Zillow API authentication error - Invalid API key")
                 return None
             elif response.status_code == 404:
-                print(f"Zillow API error: Property not found at URL: {zillow_url}")
+                print(f"  ERROR: Property not found at URL: {zillow_url}")
                 return None
             else:
-                print(f"Zillow API error: {response.status_code} - {response.text[:200]}")
+                print(f"  ERROR: Zillow API status {response.status_code}")
+                print(f"  Response: {response.text[:300]}")
                 return None
 
         except requests.exceptions.Timeout:
-            print(f"Zillow API timeout after 10s for URL: {zillow_url}")
+            print(f"  ERROR: Zillow API timeout after 15s")
+            return None
+        except requests.exceptions.ConnectionError as e:
+            print(f"  ERROR: Connection error: {e}")
             return None
         except Exception as e:
-            print(f"Error fetching from Zillow API: {e}")
+            print(f"  ERROR: Exception during API call: {type(e).__name__}: {e}")
             return None
 
     def get_property_by_address(self, address: str, city: str = None, state: str = "GA", zipcode: str = None) -> Optional[Dict]:
@@ -134,31 +144,49 @@ class ZillowAPIService:
             property_data = self.get_property_by_address(address, city, state, zipcode)
 
         if not property_data:
+            print(f"  No property data returned from API")
             return None
 
         # Extract Zestimate from response
         try:
+            print(f"  Attempting to extract Zestimate from response...")
+
             # Common Zillow scraper response patterns:
             if 'zestimate' in property_data:
-                return float(property_data['zestimate'])
+                value = float(property_data['zestimate'])
+                print(f"  Found Zestimate in root: ${value:,.0f}")
+                return value
             elif 'price' in property_data:
-                return float(property_data['price'])
+                value = float(property_data['price'])
+                print(f"  Found price in root: ${value:,.0f}")
+                return value
             elif 'estimatedValue' in property_data:
-                return float(property_data['estimatedValue'])
+                value = float(property_data['estimatedValue'])
+                print(f"  Found estimatedValue in root: ${value:,.0f}")
+                return value
             else:
                 # Try to find value in nested structure
                 for key in ['data', 'property', 'result', 'propertyDetails']:
                     if key in property_data and isinstance(property_data[key], dict):
                         nested = property_data[key]
                         if 'zestimate' in nested:
-                            return float(nested['zestimate'])
+                            value = float(nested['zestimate'])
+                            print(f"  Found Zestimate in {key}: ${value:,.0f}")
+                            return value
                         if 'price' in nested:
-                            return float(nested['price'])
+                            value = float(nested['price'])
+                            print(f"  Found price in {key}: ${value:,.0f}")
+                            return value
                         if 'estimatedValue' in nested:
-                            return float(nested['estimatedValue'])
+                            value = float(nested['estimatedValue'])
+                            print(f"  Found estimatedValue in {key}: ${value:,.0f}")
+                            return value
+
+                print(f"  WARNING: Could not find Zestimate/price in response structure")
+                print(f"  Available keys: {list(property_data.keys())[:10]}")
 
         except (KeyError, ValueError, TypeError) as e:
-            print(f"Error extracting Zestimate: {e}")
+            print(f"  ERROR extracting Zestimate: {e}")
             return None
 
         return None
