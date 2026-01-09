@@ -14,10 +14,13 @@ class ZillowAPIService:
     def _construct_zillow_url(self, address: str, city: str, state: str, zipcode: str = None) -> str:
         """
         Construct a Zillow property URL from address components.
-        Example: https://www.zillow.com/homes/301-E-79th-St-APT-23S-New-York-NY-10075
+        Example: https://www.zillow.com/homedetails/301-E-79th-St-APT-23S-New-York-NY-10075_zpid/
+
+        Note: Without ZPID, this may not work perfectly. The API works best with full URLs
+        including the Zillow Property ID (zpid), but we attempt to construct a search URL.
         """
         # Clean and format address components
-        address_clean = address.replace(' ', '-').replace(',', '')
+        address_clean = address.replace(' ', '-').replace(',', '').replace('.', '')
         city_clean = city.replace(' ', '-')
 
         # Construct full address string
@@ -26,7 +29,8 @@ class ZillowAPIService:
         else:
             full_address = f"{address_clean}-{city_clean}-{state}"
 
-        zillow_url = f"https://www.zillow.com/homes/{full_address}"
+        # Use /homedetails/ format which is what HasData expects
+        zillow_url = f"https://www.zillow.com/homedetails/{full_address}/"
         return zillow_url
 
     def _make_request(self, zillow_url: str) -> Optional[Dict]:
