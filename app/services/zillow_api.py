@@ -9,7 +9,8 @@ class ZillowAPIService:
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv('ZILLOW_API_KEY', '16c519c0-be1f-4e1d-9ff4-76702fc1f43a')
-        self.base_url = "https://api.hasdata.com/scrape/zillow/property"
+        # Use Listing API - works with address search and returns Zestimate directly
+        self.base_url = "https://api.hasdata.com/scrape/zillow/listing"
 
     def _construct_zillow_url(self, address: str, city: str, state: str, zipcode: str = None) -> str:
         """
@@ -33,8 +34,10 @@ class ZillowAPIService:
         zillow_url = f"https://www.zillow.com/homedetails/{full_address}/"
         return zillow_url
 
-    def _make_request(self, zillow_url: str) -> Optional[Dict]:
-        """Make a request to the Zillow scraper API"""
+    def _make_request_by_url(self, zillow_url: str) -> Optional[Dict]:
+        """Make a request to the Property API using a Zillow URL with ZPID"""
+        property_api_url = "https://api.hasdata.com/scrape/zillow/property"
+
         try:
             headers = {
                 'Content-Type': 'application/json',
@@ -45,14 +48,14 @@ class ZillowAPIService:
                 'url': zillow_url
             }
 
-            print(f"  Making API request to: {self.base_url}")
+            print(f"  Making API request to Property API with URL")
             print(f"  Zillow URL parameter: {zillow_url}")
 
             response = requests.get(
-                self.base_url,
+                property_api_url,
                 headers=headers,
                 params=params,
-                timeout=15  # Increased to 15s - API can be very slow
+                timeout=15
             )
 
             print(f"  API Response Status: {response.status_code}")
@@ -60,36 +63,70 @@ class ZillowAPIService:
             if response.status_code == 200:
                 data = response.json()
                 print(f"  API Response Keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
-                print(f"  API Response Sample: {str(data)[:200]}...")
                 return data
-            elif response.status_code == 401:
-                print(f"  ERROR: Zillow API authentication error - Invalid API key")
-                return None
-            elif response.status_code == 404:
-                print(f"  ERROR: Property not found at URL: {zillow_url}")
-                return None
             else:
-                print(f"  ERROR: Zillow API status {response.status_code}")
+                print(f"  ERROR: API status {response.status_code}")
+                return None
+
+        except Exception as e:
+            print(f"  ERROR: {type(e).__name__}: {e}")
+            return None
+
+    def _make_request_by_address(self, address: str, city: str, state: str, zipcode: str = None) -> Optional[Dict]:
+        """Make a request to the Listing API using address search (works without ZPID!)"""
+        try:
+            headers = {
+                'Content-Type': 'application/json',
+                'x-api-key': self.api_key
+            }
+
+            # Build search keyword from address components
+            if zipcode:
+                search_keyword = f"{address}, {city}, {state} {zipcode}"
+            else:
+                search_keyword = f"{address}, {city}, {state}"
+
+            params = {
+                'keyword': search_keyword,
+                'type': 'forSale'
+            }
+
+            print(f"  Making API request to Listing API")
+            print(f"  Search keyword: {search_keyword}")
+
+            response = requests.get(
+                self.base_url,
+                headers=headers,
+                params=params,
+                timeout=15
+            )
+
+            print(f"  API Response Status: {response.status_code}")
+
+            if response.status_code == 200:
+                data = response.json()
+                print(f"  API Response Keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+                # Listing API returns property data directly when searching by specific address
+                return data
+            else:
+                print(f"  ERROR: API status {response.status_code}")
                 print(f"  Response: {response.text[:300]}")
                 return None
 
         except requests.exceptions.Timeout:
-            print(f"  ERROR: Zillow API timeout after 15s")
-            return None
-        except requests.exceptions.ConnectionError as e:
-            print(f"  ERROR: Connection error: {e}")
+            print(f"  ERROR: API timeout after 15s")
             return None
         except Exception as e:
-            print(f"  ERROR: Exception during API call: {type(e).__name__}: {e}")
+            print(f"  ERROR: {type(e).__name__}: {e}")
             return None
 
     def get_property_by_address(self, address: str, city: str = None, state: str = "GA", zipcode: str = None) -> Optional[Dict]:
         """
-        Get property details by address
+        Get property details by address using Listing API
 
         Args:
-            address: Street address (e.g., "500 Gayle Dr")
-            city: City name (e.g., "Acworth")
+            address: Street address (e.g., "3541 Santa Leta Dr")
+            city: City name (e.g., "Ellenwood")
             state: State code (default: "GA")
             zipcode: ZIP code (optional, improves accuracy)
 
@@ -97,14 +134,11 @@ class ZillowAPIService:
             Property data including Zestimate, or None if not found
         """
         if not city:
-            print("City is required for Zillow URL construction")
+            print("City is required for address search")
             return None
 
-        # Construct Zillow URL
-        zillow_url = self._construct_zillow_url(address, city, state, zipcode)
-        print(f"Fetching property from: {zillow_url}")
-
-        return self._make_request(zillow_url)
+        # Use Listing API with address search (works without ZPID!)
+        return self._make_request_by_address(address, city, state, zipcode)
 
     def get_value_estimate(
         self,
@@ -137,10 +171,11 @@ class ZillowAPIService:
         Returns:
             Zestimate value as float, or None if not available
         """
-        # If zillow_url is provided directly, use it
+        # If zillow_url is provided directly, use Property API with URL
         if zillow_url and zillow_url.strip():
-            property_data = self._make_request(zillow_url.strip())
+            property_data = self._make_request_by_url(zillow_url.strip())
         else:
+            # Use Listing API with address search
             property_data = self.get_property_by_address(address, city, state, zipcode)
 
         if not property_data:
