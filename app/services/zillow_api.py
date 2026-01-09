@@ -45,7 +45,7 @@ class ZillowAPIService:
                 self.base_url,
                 headers=headers,
                 params=params,
-                timeout=30
+                timeout=5  # Reduced from 30s - fail fast if API isn't responding
             )
 
             if response.status_code == 200:
