@@ -19,7 +19,7 @@ from app.models.property_models import (
 )
 from app.models.flip_calculator_models import FlipCalculatorInput
 from app.services.flip_calculator import calculate_flip_deal
-from app.services.rentcast_api import RentcastAPIService
+from app.services.zillow_api import ZillowAPIService
 
 router = APIRouter(prefix="/sheets", tags=["google-sheets"])
 
@@ -111,6 +111,62 @@ def extract_sheet_id(sheet_url: str) -> str:
         return match.group(1)
 
     return sheet_url
+
+
+def check_sheet_permissions(client, sheet_id: str) -> dict:
+    """
+    Check if we have edit permissions on the Google Sheet.
+
+    Args:
+        client: Authenticated gspread client
+        sheet_id: Google Sheets ID
+
+    Returns:
+        dict with 'can_edit' (bool) and 'message' (str)
+    """
+    try:
+        # Try to get the spreadsheet
+        spreadsheet = client.open_by_key(sheet_id)
+
+        # Attempt to read sheet properties (requires at least view access)
+        properties = spreadsheet.fetch_sheet_metadata()
+
+        # Try a test write operation to verify edit permissions
+        # We'll update the spreadsheet properties with the same title (no actual change)
+        try:
+            # This requires edit permission but doesn't actually change anything
+            test_worksheet = spreadsheet.get_worksheet(0)
+            # Attempting to get cell will work with view-only
+            # But attempting to update (even with same value) requires edit
+            test_cell = test_worksheet.acell('A1')
+
+            # Try to update with same value - this will fail if view-only
+            test_worksheet.update('A1', [[test_cell.value]])
+
+            return {
+                'can_edit': True,
+                'message': 'Sheet has edit permissions'
+            }
+        except gspread.exceptions.APIError as e:
+            # Check if it's a permission error
+            if 'insufficient permissions' in str(e).lower() or 'permission denied' in str(e).lower():
+                return {
+                    'can_edit': False,
+                    'message': 'Sheet is view-only. Please share the sheet with the service account with Editor permissions.'
+                }
+            # Re-raise if it's a different error
+            raise
+
+    except gspread.SpreadsheetNotFound:
+        return {
+            'can_edit': False,
+            'message': f'Spreadsheet not found or not shared with service account'
+        }
+    except Exception as e:
+        return {
+            'can_edit': False,
+            'message': f'Error checking permissions: {str(e)}'
+        }
 
 
 def get_google_sheets_client(credentials_path: Optional[str] = None):
@@ -225,20 +281,17 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
     ## Output Columns
 
-    Writes 11 columns to the sheet (columns X through AH):
+    Writes 8 columns to the sheet (columns X through AE):
 
-    **Market Value Analysis (X-AE):**
-    - **X: Deal Status** - GOOD DEAL, MAYBE, or NO DEAL (based on Rentcast Market Value vs ARV Needed)
-    - **Y: Market Value** - Rentcast property valuation
-    - **Z: ARV Needed** - After Repair Value needed for 20% ROI
-    - **AA: Market Value vs ARV** - Difference between market value and ARV needed
-    - **AB: Market Supports Deal** - YES/NO if market value supports the deal
+    **Zestimate & ARV Analysis:**
+    - **X: Zestimate** - Zillow property valuation
+    - **Y: ARV (80%)** - After Repair Value = Zestimate × 0.80
+    - **Z: ARV Needed** - ARV needed for 20% ROI from flip calculator
+    - **AA: Deal Status** - GOOD DEAL, MAYBE, or NO DEAL (based on ARV 80% vs ARV Needed)
+    - **AB: Market Supports Deal** - YES/NO if ARV (80%) supports the deal
     - **AC: Rehab Cost** - Total renovation costs from flip calculator
     - **AD: Total Cost** - Total all-in costs (purchase + renovation + holding + selling)
-    - **AE: Maximum Allowable Offer** - 50% of ARV Needed (MAO = ARV × 0.50)
-
-    **Comparable Properties (AF-AH) - Only for GOOD DEAL:**
-    - **AF-AH**: Top 3 comparable sales from Rentcast (Address | Price | Date | Beds/Baths | Sqft)
+    - **AE: Maximum Allowable Offer** - 50% of ARV (80%) [MAO = ARV × 0.50]
 
     **Note on Flip Calculator:**
     Flip calculator parameters (repair costs, hold time, financing terms, etc.) are customizable
@@ -248,24 +301,26 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
     ## Deal Quality Determination
 
-    Deal quality is determined by comparing Rentcast Market Value against the calculated ARV Needed:
+    Deal quality is determined by comparing ARV (80% of Zestimate) against the calculated ARV Needed:
 
-    - **GOOD DEAL**: Market Value ≥ ARV Needed × 1.05 (5% cushion for profit)
-    - **MAYBE**: Market Value ≥ ARV Needed (breakeven or minimal profit)
-    - **NO DEAL**: Market Value < ARV Needed (insufficient value to support flip)
+    - **GOOD DEAL**: ARV (80%) ≥ ARV Needed × 1.05 (5% cushion for profit)
+    - **MAYBE**: ARV (80%) ≥ ARV Needed (breakeven or minimal profit)
+    - **NO DEAL**: ARV (80%) < ARV Needed (insufficient value to support flip)
 
     ## Maximum Allowable Offer (MAO)
 
-    MAO is calculated as 50% of the ARV Needed, providing a conservative entry point:
-    - Formula: MAO = ARV Needed × 0.50
+    MAO is calculated as 50% of the ARV (80% of Zestimate), providing a conservative entry point:
+    - Formula: MAO = min(ARV (80%) × 0.50, List Price)
+    - Base calculation: Zestimate × 0.80 × 0.50 = Zestimate × 0.40
+    - **Important**: MAO is capped at the list price - never offer more than asking
     - This ensures sufficient margin for repairs, holding costs, and profit
     - Adjust offer based on property condition and market dynamics
 
     ## Square Footage Handling
 
     - **Sheet Data**: Uses Building Sqft column when available
-    - **Rentcast Fallback**: Automatically fetches sqft from Rentcast API if missing
-    - **Source Tracking**: Sqft_Source column shows data origin (Sheet or Rentcast)
+    - **Zillow Fallback**: Automatically fetches sqft from Zillow API if missing
+    - **Source Tracking**: Sqft_Source column shows data origin (Sheet or Zillow)
 
     ## Authentication
 
@@ -276,9 +331,18 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     # Get Google Sheets client
     client = get_google_sheets_client(request.credentials_path)
 
-    # Extract sheet ID and open spreadsheet
+    # Extract sheet ID
     sheet_id = extract_sheet_id(request.sheet_url)
 
+    # Check permissions before processing
+    permission_check = check_sheet_permissions(client, sheet_id)
+    if not permission_check['can_edit']:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=permission_check['message']
+        )
+
+    # Open spreadsheet (we already checked permissions, but keep error handling)
     try:
         spreadsheet = client.open_by_key(sheet_id)
 
@@ -355,8 +419,8 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
             detail=f"Failed to read sheet data: {str(e)}"
         )
 
-    # Initialize Rentcast API service
-    rentcast = RentcastAPIService()
+    # Initialize Zillow API service
+    zillow = ZillowAPIService()
 
     # Extract custom parameters or use defaults
     params = request.parameters
@@ -439,16 +503,34 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
             successful += 1
 
-            # Calculate flip deal if sqft available
-            flip_results = []
-            sqft_source = "Sheet"
-
-            # Get sqft from sheet
+            # Get sqft from sheet first
             sqft = 0
+            sqft_source = "Sheet"
             if col_sqft is not None and col_sqft < len(row):
                 sqft = safe_int(row[col_sqft], 0)
 
-            # Now process flip calculator if we have sqft
+            # Get address for API calls
+            address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else None
+
+            # Fetch Zestimate from Zillow (simplified - no comps needed)
+            zestimate = None
+            if address:
+                try:
+                    print(f"  Fetching Zestimate from Zillow for {address}, {city}")
+                    zestimate = zillow.get_value_estimate(
+                        address, city, "GA", zipcode,
+                        square_footage=sqft if sqft > 0 else None,
+                        bedrooms=bedrooms,
+                        bathrooms=bathrooms
+                    )
+                    if zestimate:
+                        print(f"  Retrieved Zestimate: ${zestimate:,.0f}")
+
+                except Exception as e:
+                    print(f"  Error fetching Zestimate from Zillow: {e}")
+
+            # Calculate flip deal if we have sqft
+            flip_results = []
             if sqft > 0:
                 try:
                     # Get address if available
@@ -508,234 +590,70 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                         f"${flip_result.selling.total_selling:,.0f}",
                     ]
 
-                    # Fetch Rentcast value estimate and create comparison columns
-                    # Always show ARV_Needed even if Rentcast fails
+                    # Calculate ARV as 80% of Zestimate
                     arv_needed = flip_result.recommended_arv_for_profit
 
                     try:
-                        address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else None
-                        print(f"  Fetching Rentcast value for {address}, {city} (sqft={sqft}, beds={bedrooms}, baths={bathrooms})")
-                        market_value = rentcast.get_value_estimate(
-                            address, city, "GA", zipcode,
-                            square_footage=sqft,
-                            bedrooms=bedrooms,
-                            bathrooms=bathrooms
-                        ) if address else None
+                        if zestimate:
+                            # Calculate ARV as 80% of Zestimate
+                            arv_80_percent = zestimate * 0.80
 
-                        if market_value:
-                            value_vs_arv = market_value - arv_needed
-                            value_supports = "YES" if market_value >= arv_needed else "NO"
-
-                            # Determine deal status
-                            if market_value >= arv_needed * 1.05:  # 5% cushion
+                            # Determine deal status by comparing ARV (80%) vs ARV Needed
+                            if arv_80_percent >= arv_needed * 1.05:  # 5% cushion
                                 deal_status = "GOOD DEAL"
-                            elif market_value >= arv_needed:
+                            elif arv_80_percent >= arv_needed:
                                 deal_status = "MAYBE"
                             else:
                                 deal_status = "NO DEAL"
 
-                            # Calculate Maximum Allowable Offer (MAO)
-                            mao = arv_needed * 0.50
+                            value_supports = "YES" if arv_80_percent >= arv_needed else "NO"
 
-                            # Fetch comps for GOOD DEAL properties
-                            comp_cols = ["", "", ""]  # Default: 3 empty comp columns
-                            if deal_status == "GOOD DEAL":
-                                print(f"  Fetching comps for GOOD DEAL property")
-                                try:
-                                    property_data = rentcast.get_property_data(
-                                        address, city, "GA", zipcode,
-                                        square_footage=sqft,
-                                        bedrooms=bedrooms,
-                                        bathrooms=bathrooms
-                                    )
-                                    if property_data and 'comparables' in property_data:
-                                        comps = property_data['comparables'][:3]  # Top 3 comps
-                                        for i, comp in enumerate(comps):
-                                            # Format: Address | $Price | Date | Sqft
-                                            comp_address = comp.get('formattedAddress', comp.get('addressLine1', 'N/A'))
-                                            comp_price = comp.get('price', 0)
-                                            comp_date = comp.get('lastSeenDate', comp.get('listedDate', 'N/A'))
-                                            comp_sqft = comp.get('squareFootage', 'N/A')
-                                            comp_beds = comp.get('bedrooms', '')
-                                            comp_baths = comp.get('bathrooms', '')
+                            # Calculate Maximum Allowable Offer (MAO) as 50% of ARV (80%)
+                            # But never higher than the list price
+                            mao = arv_80_percent * 0.50  # = Zestimate * 0.40
+                            mao = min(mao, list_price)  # Cap at list price
 
-                                            # Format: Address | $Price | Date | Beds/Baths | Sqft
-                                            comp_cols[i] = f"{comp_address} | ${comp_price:,.0f} | {comp_date} | {comp_beds}bd/{comp_baths}ba | {comp_sqft}sf"
-                                except Exception as e:
-                                    print(f"  Error fetching comps: {e}")
-
+                            # 8 columns: Zestimate, ARV (80%), ARV Needed, Deal Status, Market Supports, Rehab, Total Cost, MAO
                             value_cols = [
-                                deal_status,
-                                f"${market_value:,.0f}",
-                                f"${arv_needed:,.0f}",
-                                f"${value_vs_arv:,.0f}",
-                                value_supports,
-                                f"${flip_result.renovation.total_renovation:,.0f}",
-                                f"${flip_result.profit_analysis.total_all_costs:,.0f}",
-                                f"${mao:,.0f}"
-                            ] + comp_cols
+                                f"${zestimate:,.0f}",  # Zestimate
+                                f"${arv_80_percent:,.0f}",  # ARV (80%)
+                                f"${arv_needed:,.0f}",  # ARV Needed
+                                deal_status,  # Deal Status
+                                value_supports,  # Market Supports Deal
+                                f"${flip_result.renovation.total_renovation:,.0f}",  # Rehab Cost
+                                f"${flip_result.profit_analysis.total_all_costs:,.0f}",  # Total Cost
+                                f"${mao:,.0f}"  # Maximum Allowable Offer
+                            ]
                         else:
-                            print(f"  Rentcast value not available")
+                            print(f"  Zestimate not available")
                             mao = arv_needed * 0.50
-                            value_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
+                            mao = min(mao, list_price)  # Cap at list price
+                            value_cols = ["Not Available", "N/A", f"${arv_needed:,.0f}", "UNKNOWN", "N/A", f"${flip_result.renovation.total_renovation:,.0f}", f"${flip_result.profit_analysis.total_all_costs:,.0f}", f"${mao:,.0f}"]
                     except Exception as e:
-                        print(f"  Error fetching Rentcast value: {e}")
+                        print(f"  Error calculating deal analysis: {e}")
                         mao = arv_needed * 0.50 if arv_needed else 0
-                        value_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
+                        mao = min(mao, list_price) if mao and list_price else mao  # Cap at list price
+                        value_cols = ["ERROR", "ERROR", f"${arv_needed:,.0f}" if arv_needed else "N/A", "ERROR", "N/A", "N/A", "N/A", f"${mao:,.0f}"]
 
                 except Exception as e:
                     print(f"Error calculating flip for row {idx}: {e}")
-                    # Add empty columns if error (9 value+comps + 2 sqft + 15 flip = 26)
-                    value_cols = ["ERROR", "", "", "", "", "", "", "", "", "", ""]
+                    value_cols = ["ERROR", "", "", "", "", "", "", ""]
                     flip_results = ["", "", "ERROR"] + [""] * 13
             else:
-                # No sqft data - fetch from Rentcast if address available
-                if col_address is not None and col_address < len(row):
-                    address = str(row[col_address]).strip()
-                    if address:
-                        try:
-                            print(f"  Fetching sqft from Rentcast for {address} (beds={bedrooms}, baths={bathrooms})")
-                            property_data = rentcast.get_property_data(
-                                address, city, "GA", zipcode,
-                                bedrooms=bedrooms,
-                                bathrooms=bathrooms
-                            )
-                            if property_data and 'squareFootage' in property_data:
-                                sqft = int(property_data['squareFootage'])
-                                sqft_source = "Rentcast"
-                                print(f"  Retrieved sqft from Rentcast: {sqft}")
-                        except Exception as e:
-                            print(f"  Error fetching sqft from Rentcast: {e}")
+                # Still no sqft after API call - cannot calculate flip
+                print(f"  No sqft available for row {idx} - skipping flip calculation")
+                zestimate_val = f"${zestimate:,.0f}" if zestimate else "N/A"
+                arv_80_val = f"${zestimate * 0.80:,.0f}" if zestimate else "N/A"
+                value_cols = [zestimate_val, arv_80_val, "N/A", "NO SQFT", "N/A", "N/A", "N/A", "N/A"]
+                flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 13
 
-                # If we got sqft from Rentcast, recalculate flip
-                if sqft > 0 and sqft_source == "Rentcast":
-                    try:
-                        flip_input = FlipCalculatorInput(
-                            property_address=address,
-                            city=city or "",
-                            zip_code=zipcode or "00000",
-                            sqft_living=sqft,
-                            purchase_price=list_price,
-                            arv=list_price,
-                            repair_cost_per_sqft=repair_cost_per_sqft,
-                            hold_time_months=hold_time_months,
-                            interest_rate_annual=interest_rate,
-                            loan_points=loan_points,
-                            loan_to_cost_ratio=loan_to_cost,
-                            monthly_hoa_maintenance=monthly_hoa,
-                            monthly_insurance=monthly_insurance,
-                            monthly_utilities=monthly_utilities,
-                            property_tax_rate_annual=property_tax_rate,
-                            closing_costs_buy_percent=closing_buy_pct,
-                            closing_costs_sell_percent=closing_sell_pct,
-                            seller_credit_percent=seller_credit_pct,
-                            staging_marketing=staging_cost,
-                            listing_commission_rate=listing_commission,
-                            buyer_commission_rate=buyer_commission
-                        )
-                        flip_result = calculate_flip_deal(flip_input)
-
-                        flip_results = [
-                            # Sqft info (2 columns)
-                            str(sqft),
-                            sqft_source,
-                            # Quick indicators (3 columns)
-                            "YES" if flip_result.profit_analysis.is_profitable else "NO",
-                            "YES" if flip_result.profit_analysis.meets_minimum_roi else "NO",
-                            "YES" if flip_result.profit_analysis.meets_70_percent_rule else "NO",
-                            # Key metrics (3 columns)
-                            f"{flip_result.profit_analysis.roi_percent:.1f}%",
-                            f"${flip_result.profit_analysis.gross_profit:,.0f}",
-                            f"{flip_result.profit_analysis.profit_margin_percent:.1f}%",
-                            # Core numbers (4 columns)
-                            f"${flip_result.acquisition.purchase_price:,.0f}",
-                            f"${flip_result.profit_analysis.total_all_costs:,.0f}",
-                            f"${flip_result.profit_analysis.cash_needed:,.0f}",
-                            f"${flip_result.max_offer_70_rule:,.0f}",
-                            # Cost summaries (4 columns)
-                            f"${flip_result.acquisition.total_acquisition:,.0f}",
-                            f"${flip_result.renovation.total_renovation:,.0f}",
-                            f"${flip_result.holding.total_holding:,.0f}",
-                            f"${flip_result.selling.total_selling:,.0f}",
-                        ]
-
-                        # Get Rentcast value and comps
-                        arv_needed = flip_result.recommended_arv_for_profit
-                        try:
-                            market_value = rentcast.get_value_estimate(
-                                address, city, "GA", zipcode,
-                                square_footage=sqft,
-                                bedrooms=bedrooms,
-                                bathrooms=bathrooms
-                            )
-                            if market_value:
-                                value_vs_arv = market_value - arv_needed
-                                value_supports = "YES" if market_value >= arv_needed else "NO"
-
-                                if market_value >= arv_needed * 1.05:
-                                    deal_status = "GOOD DEAL"
-                                elif market_value >= arv_needed:
-                                    deal_status = "MAYBE"
-                                else:
-                                    deal_status = "NO DEAL"
-
-                                mao = arv_needed * 0.50
-
-                                comp_cols = ["", "", ""]
-                                if deal_status == "GOOD DEAL":
-                                    try:
-                                        property_data = rentcast.get_property_data(
-                                            address, city, "GA", zipcode,
-                                            square_footage=sqft,
-                                            bedrooms=bedrooms,
-                                            bathrooms=bathrooms
-                                        )
-                                        if property_data and 'comparables' in property_data:
-                                            comps = property_data['comparables'][:3]
-                                            for i, comp in enumerate(comps):
-                                                comp_address = comp.get('formattedAddress', comp.get('addressLine1', 'N/A'))
-                                                comp_price = comp.get('price', 0)
-                                                comp_date = comp.get('lastSeenDate', comp.get('listedDate', 'N/A'))
-                                                comp_sqft = comp.get('squareFootage', 'N/A')
-                                                comp_beds = comp.get('bedrooms', '')
-                                                comp_baths = comp.get('bathrooms', '')
-                                                comp_cols[i] = f"{comp_address} | ${comp_price:,.0f} | {comp_date} | {comp_beds}bd/{comp_baths}ba | {comp_sqft}sf"
-                                    except Exception as e:
-                                        print(f"  Error fetching comps: {e}")
-
-                                value_cols = [
-                                    deal_status,
-                                    f"${market_value:,.0f}",
-                                    f"${arv_needed:,.0f}",
-                                    f"${value_vs_arv:,.0f}",
-                                    value_supports,
-                                    f"${flip_result.renovation.total_renovation:,.0f}",
-                                    f"${flip_result.profit_analysis.total_all_costs:,.0f}",
-                                    f"${mao:,.0f}"
-                                ] + comp_cols
-                            else:
-                                mao = arv_needed * 0.50
-                                value_cols = ["UNKNOWN", "Not Available", f"${arv_needed:,.0f}", "N/A", "N/A", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
-                        except Exception as e:
-                            print(f"  Error fetching Rentcast value: {e}")
-                            mao = arv_needed * 0.50
-                            value_cols = ["ERROR", "API Error", f"${arv_needed:,.0f}", "N/A", "N/A", "N/A", "N/A", f"${mao:,.0f}", "", "", ""]
-                    except Exception as e:
-                        print(f"  Error calculating flip after Rentcast sqft: {e}")
-                        value_cols = ["ERROR", "", "", "", "", "", "", "", "", "", ""]
-                        flip_results = ["", "", "ERROR"] + [""] * 13
-                else:
-                    # Still no sqft - add error status (only value_cols written, not flip_results)
-                    value_cols = ["NO SQFT", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "", "", ""]
-                    flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 13
-
-            # Format output (11 columns: 8 value + 3 comps, flip calculated but not written)
+            # Format output (8 columns: Zestimate, ARV 80%, ARV Needed, Deal Status, Market Supports, Rehab, Total Cost, MAO)
             results_to_write.append(value_cols)
 
         except Exception as e:
             failed += 1
-            # Add empty columns for failed rows (11 columns: 8 value + 3 comps)
-            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", "", "", "", ""])
+            # Add empty columns for failed rows (8 columns)
+            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", ""])
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
@@ -746,24 +664,22 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     if request.write_back and results_to_write:
         try:
             print(f"DEBUG: Starting write operation to sheet...")
-            # Write to columns X through AH (11 columns: 8 value + 3 comps)
+            # Write to columns X through AE (8 columns)
             # First, add/update header row
             header_row_num = request.start_row - 1
             if header_row_num >= 1:
                 headers = [
-                    # Market value comparison columns (X-AE)
-                    'Deal_Status', 'Market_Value', 'ARV_Needed', 'Market_Value_vs_ARV', 'Market_Supports_Deal',
-                    'Rehab_Cost', 'Total_Cost', 'Maximum_Allowable_Offer',
-                    # Comparable properties (AF-AH) - only for GOOD DEAL
-                    'Comp_1', 'Comp_2', 'Comp_3'
+                    # Zestimate & ARV Analysis (X-AE)
+                    'Zestimate', 'ARV_80_Percent', 'ARV_Needed', 'Deal_Status', 'Market_Supports_Deal',
+                    'Rehab_Cost', 'Total_Cost', 'Maximum_Allowable_Offer'
                 ]
                 print(f"DEBUG: Writing headers to row {header_row_num}")
-                worksheet.update(f'X{header_row_num}:AH{header_row_num}', [headers])
+                worksheet.update(f'X{header_row_num}:AE{header_row_num}', [headers])
 
             # Write prediction results
             start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'AH{end_row}'
+            end_cell = f'AE{end_row}'
 
             print(f"DEBUG: Writing {len(results_to_write)} rows from {start_cell} to {end_cell}")
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)
