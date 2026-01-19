@@ -20,15 +20,106 @@ from app.models.property_models import (
 from app.models.flip_calculator_models import FlipCalculatorInput
 from app.services.flip_calculator import calculate_flip_deal
 from app.services.zillow_api import ZillowAPIService
+from app.services.ml_arv_service import MLARVPredictor, compare_with_zillow
 
 router = APIRouter(prefix="/sheets", tags=["google-sheets"])
 
 # Global variable for loaded models (set from main.py)
 stacker_model = None
+ml_arv_model = None
 
 # Load area-specific ARV multiples
 arv_multiples_zip = None
 arv_multiples_city = None
+
+
+def load_ml_arv_model():
+    """Load the trained ML ARV model"""
+    global ml_arv_model
+
+    try:
+        model_path = 'models/ml_arv_hybrid.pkl'
+        if os.path.exists(model_path):
+            ml_arv_model = MLARVPredictor()
+            ml_arv_model.load_model(model_path)
+            print(f"Loaded ML ARV hybrid model from {model_path}")
+        else:
+            print(f"ML ARV model not found at {model_path}. Will use Zillow-only predictions.")
+    except Exception as e:
+        print(f"Error loading ML ARV model: {e}")
+        ml_arv_model = None
+
+
+def get_hybrid_arv(property_data: dict, zestimate: Optional[float]) -> dict:
+    """
+    Get hybrid ARV using ML model (primary) and Zillow (validation).
+
+    Returns dict with:
+        - arv_primary: Primary ARV to use
+        - arv_ml: ML predicted ARV (or None)
+        - arv_zillow: Zillow-based ARV (zestimate * 0.80)
+        - confidence: Confidence level
+        - agreement: Agreement status
+        - flag_review: Whether to flag for manual review
+    """
+    global ml_arv_model
+
+    # Get Zillow-based ARV (fallback)
+    arv_zillow = zestimate * 0.80 if zestimate else None
+
+    # Try to get ML ARV if model is loaded
+    arv_ml = None
+    ml_result = None
+
+    if ml_arv_model and ml_arv_model.is_trained:
+        try:
+            ml_result = ml_arv_model.predict_with_confidence(property_data)
+            arv_ml = ml_result['arv_prediction']
+        except Exception as e:
+            print(f"  Warning: ML ARV prediction failed: {e}")
+            arv_ml = None
+
+    # Determine primary ARV using hybrid logic
+    if arv_ml:
+        # Have ML prediction - compare with Zillow
+        comparison = compare_with_zillow(arv_ml, zestimate)
+        return {
+            'arv_primary': comparison['primary_arv'],
+            'arv_ml': arv_ml,
+            'arv_ml_lower': ml_result['arv_lower'] if ml_result else None,
+            'arv_ml_upper': ml_result['arv_upper'] if ml_result else None,
+            'arv_zillow': int(arv_zillow) if arv_zillow else None,
+            'confidence': comparison['confidence'],
+            'agreement': comparison['agreement'],
+            'flag_review': comparison['flag_review'],
+            'ml_confidence': ml_result['confidence'] if ml_result else None
+        }
+    elif arv_zillow:
+        # Only have Zillow - use it
+        return {
+            'arv_primary': int(arv_zillow),
+            'arv_ml': None,
+            'arv_ml_lower': None,
+            'arv_ml_upper': None,
+            'arv_zillow': int(arv_zillow),
+            'confidence': 'ZILLOW_ONLY',
+            'agreement': 'NO_ML',
+            'flag_review': False,
+            'ml_confidence': None
+        }
+    else:
+        # No prediction available
+        return {
+            'arv_primary': None,
+            'arv_ml': None,
+            'arv_ml_lower': None,
+            'arv_ml_upper': None,
+            'arv_zillow': None,
+            'confidence': 'NO_DATA',
+            'agreement': 'NO_DATA',
+            'flag_review': True,
+            'ml_confidence': None
+        }
 
 
 def load_arv_multiples():
@@ -57,8 +148,9 @@ def set_model(model):
     """Set the global model instance"""
     global stacker_model
     stacker_model = model
-    # Load ARV multiples when model is set
+    # Load ARV multiples and ML model when model is set
     load_arv_multiples()
+    load_ml_arv_model()
 
 
 def get_arv_multiple(zipcode, city, scenario='moderate'):
@@ -635,70 +727,92 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                         f"${flip_result.selling.total_selling:,.0f}",
                     ]
 
-                    # Calculate ARV as 80% of Zestimate
+                    # Get Hybrid ARV (ML + Zillow)
                     arv_needed = flip_result.recommended_arv_for_profit
 
                     try:
-                        if zestimate:
-                            # Calculate ARV as 80% of Zestimate
-                            arv_80_percent = zestimate * 0.80
+                        # Prepare property data for ML model
+                        property_data = {
+                            'Building Sqft': sqft,
+                            'Bedrooms': bedrooms if bedrooms else 3,
+                            'Total Bathrooms': bathrooms if bathrooms else 2,
+                            'Lot Size Sqft': 10000,  # Default lot size
+                            'Effective Year Built': 1990,  # Default year
+                            'Total Assessed Value': assessed_value if assessed_value else list_price * 0.8,
+                            'City': city if city else 'Unknown'
+                        }
 
-                            # Determine deal status by comparing ARV (80%) vs ARV Needed
-                            if arv_80_percent >= arv_needed * 1.05:  # 5% cushion
+                        # Get hybrid ARV prediction
+                        hybrid_arv = get_hybrid_arv(property_data, zestimate)
+
+                        if hybrid_arv['arv_primary']:
+                            arv_primary = hybrid_arv['arv_primary']
+
+                            # Determine deal status by comparing primary ARV vs ARV Needed
+                            if arv_primary >= arv_needed * 1.05:  # 5% cushion
                                 deal_status = "GOOD DEAL"
-                            elif arv_80_percent >= arv_needed:
+                            elif arv_primary >= arv_needed:
                                 deal_status = "MAYBE"
                             else:
                                 deal_status = "NO DEAL"
 
-                            value_supports = "YES" if arv_80_percent >= arv_needed else "NO"
+                            value_supports = "YES" if arv_primary >= arv_needed else "NO"
 
-                            # Calculate Maximum Allowable Offer (MAO) as 50% of ARV (80%)
+                            # Calculate Maximum Allowable Offer (MAO) as 50% of primary ARV
                             # But never higher than the list price
-                            mao = arv_80_percent * 0.50  # = Zestimate * 0.40
+                            mao = arv_primary * 0.50
                             mao = min(mao, list_price)  # Cap at list price
 
-                            # 8 columns: Zestimate, ARV (80%), ARV Needed, Deal Status, Market Supports, Rehab, Total Cost, MAO
+                            # Prepare AR V range string
+                            if hybrid_arv['arv_ml_lower'] and hybrid_arv['arv_ml_upper']:
+                                arv_range = f"${hybrid_arv['arv_ml_lower']:,.0f} - ${hybrid_arv['arv_ml_upper']:,.0f}"
+                            else:
+                                arv_range = "N/A"
+
+                            # 12 columns: Zestimate, ARV_ML, ARV_Range, ARV_Primary, ARV_Needed, Deal_Status, Confidence, Agreement, Market_Supports, Rehab, Total_Cost, MAO
                             value_cols = [
-                                f"${zestimate:,.0f}",  # Zestimate
-                                f"${arv_80_percent:,.0f}",  # ARV (80%)
+                                f"${zestimate:,.0f}" if zestimate else "N/A",  # Zestimate
+                                f"${hybrid_arv['arv_ml']:,.0f}" if hybrid_arv['arv_ml'] else "N/A",  # ARV ML
+                                arv_range,  # ARV Range (ML confidence interval)
+                                f"${arv_primary:,.0f}",  # ARV Primary (hybrid)
                                 f"${arv_needed:,.0f}",  # ARV Needed
                                 deal_status,  # Deal Status
+                                hybrid_arv['confidence'],  # Confidence
+                                hybrid_arv['agreement'],  # Agreement (ML vs Zillow)
                                 value_supports,  # Market Supports Deal
                                 f"${flip_result.renovation.total_renovation:,.0f}",  # Rehab Cost
                                 f"${flip_result.profit_analysis.total_all_costs:,.0f}",  # Total Cost
                                 f"${mao:,.0f}"  # Maximum Allowable Offer
                             ]
                         else:
-                            print(f"  Zestimate not available")
+                            print(f"  No ARV prediction available")
                             mao = arv_needed * 0.50
                             mao = min(mao, list_price)  # Cap at list price
-                            value_cols = ["Not Available", "N/A", f"${arv_needed:,.0f}", "UNKNOWN", "N/A", f"${flip_result.renovation.total_renovation:,.0f}", f"${flip_result.profit_analysis.total_all_costs:,.0f}", f"${mao:,.0f}"]
+                            value_cols = ["N/A", "N/A", "N/A", "N/A", f"${arv_needed:,.0f}", "UNKNOWN", "NO_DATA", "NO_DATA", "N/A", f"${flip_result.renovation.total_renovation:,.0f}", f"${flip_result.profit_analysis.total_all_costs:,.0f}", f"${mao:,.0f}"]
                     except Exception as e:
                         print(f"  Error calculating deal analysis: {e}")
                         mao = arv_needed * 0.50 if arv_needed else 0
                         mao = min(mao, list_price) if mao and list_price else mao  # Cap at list price
-                        value_cols = ["ERROR", "ERROR", f"${arv_needed:,.0f}" if arv_needed else "N/A", "ERROR", "N/A", "N/A", "N/A", f"${mao:,.0f}"]
+                        value_cols = ["ERROR", "ERROR", "ERROR", "ERROR", f"${arv_needed:,.0f}" if arv_needed else "N/A", "ERROR", "ERROR", "ERROR", "N/A", "N/A", "N/A", f"${mao:,.0f}"]
 
                 except Exception as e:
                     print(f"Error calculating flip for row {idx}: {e}")
-                    value_cols = ["ERROR", "", "", "", "", "", "", ""]
+                    value_cols = ["ERROR", "", "", "", "", "", "", "", "", "", "", ""]
                     flip_results = ["", "", "ERROR"] + [""] * 13
             else:
                 # Still no sqft after API call - cannot calculate flip
                 print(f"  No sqft available for row {idx} - skipping flip calculation")
                 zestimate_val = f"${zestimate:,.0f}" if zestimate else "N/A"
-                arv_80_val = f"${zestimate * 0.80:,.0f}" if zestimate else "N/A"
-                value_cols = [zestimate_val, arv_80_val, "N/A", "NO SQFT", "N/A", "N/A", "N/A", "N/A"]
+                value_cols = [zestimate_val, "N/A", "N/A", "N/A", "N/A", "NO SQFT", "NO_DATA", "NO_DATA", "N/A", "N/A", "N/A", "N/A"]
                 flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 13
 
-            # Format output (8 columns: Zestimate, ARV 80%, ARV Needed, Deal Status, Market Supports, Rehab, Total Cost, MAO)
+            # Format output (12 columns: Zestimate, ARV_ML, ARV_Range, ARV_Primary, ARV_Needed, Deal_Status, Confidence, Agreement, Market_Supports, Rehab, Total_Cost, MAO)
             results_to_write.append(value_cols)
 
         except Exception as e:
             failed += 1
-            # Add empty columns for failed rows (8 columns)
-            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", ""])
+            # Add empty columns for failed rows (12 columns)
+            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", "", "", "", "", ""])
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
@@ -709,22 +823,23 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     if request.write_back and results_to_write:
         try:
             print(f"DEBUG: Starting write operation to sheet...")
-            # Write to columns X through AE (8 columns)
+            # Write to columns X through AI (12 columns)
             # First, add/update header row
             header_row_num = request.start_row - 1
             if header_row_num >= 1:
                 headers = [
-                    # Zestimate & ARV Analysis (X-AE)
-                    'Zestimate', 'ARV_80_Percent', 'ARV_Needed', 'Deal_Status', 'Market_Supports_Deal',
+                    # Hybrid ARV Analysis (X-AI) - 12 columns
+                    'Zestimate', 'ARV_ML', 'ARV_Range', 'ARV_Primary', 'ARV_Needed', 'Deal_Status',
+                    'Confidence', 'ML_Zillow_Agreement', 'Market_Supports_Deal',
                     'Rehab_Cost', 'Total_Cost', 'Maximum_Allowable_Offer'
                 ]
                 print(f"DEBUG: Writing headers to row {header_row_num}")
-                worksheet.update(f'X{header_row_num}:AE{header_row_num}', [headers])
+                worksheet.update(f'X{header_row_num}:AI{header_row_num}', [headers])
 
             # Write prediction results
             start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'AE{end_row}'
+            end_cell = f'AI{end_row}'
 
             print(f"DEBUG: Writing {len(results_to_write)} rows from {start_cell} to {end_cell}")
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)

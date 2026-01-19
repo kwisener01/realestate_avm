@@ -37,6 +37,8 @@ Thumbs.db
 
 # Project specific
 models/*.pkl
+# Exception: Include trained ML ARV model for deployment
+!models/ml_arv_hybrid.pkl
 *.zip
 interior-design-*/
 renewable-energy-*/
