@@ -5,6 +5,7 @@ Uses area-specific ARV multiples from flip analysis
 
 from fastapi import APIRouter, HTTPException, status
 from typing import Optional, List
+import requests
 import gspread
 from google.oauth2.service_account import Credentials
 from google.auth.exceptions import GoogleAuthError
@@ -626,7 +627,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
             zillow_url_from_sheet = str(row[col_zillow_url]).strip() if col_zillow_url is not None and col_zillow_url < len(row) and row[col_zillow_url] else None
 
-            # Fetch Zestimate from Zillow (use URL with ZPID if available, otherwise construct)
+            # Fetch Zestimate and property details from Zillow (use URL with ZPID if available)
             zestimate = None
             zestimate_source = "API"  # Track where Zestimate came from
 
@@ -637,13 +638,24 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     else:
                         print(f"  Fetching Zestimate from Zillow for {address}, {city}")
 
-                    zestimate = zillow.get_value_estimate(
+                    # Get full property details including sqft
+                    api_result = zillow.get_value_estimate(
                         address or "Unknown", city, "GA", zipcode,
                         square_footage=sqft if sqft > 0 else None,
                         bedrooms=bedrooms,
                         bathrooms=bathrooms,
-                        zillow_url=zillow_url_from_sheet
+                        zillow_url=zillow_url_from_sheet,
+                        return_details=True  # Get sqft along with zestimate
                     )
+
+                    if api_result and isinstance(api_result, dict):
+                        zestimate = api_result.get('zestimate')
+
+                        # Use API sqft if sheet doesn't have it
+                        if sqft == 0 and api_result.get('sqft'):
+                            sqft = api_result['sqft']
+                            sqft_source = "Zillow API"
+                            print(f"  SUCCESS: Got sqft from API: {sqft:,}")
 
                     if zestimate and zestimate > 0:
                         print(f"  SUCCESS: Retrieved Zestimate from API: ${zestimate:,.0f}")
@@ -666,153 +678,40 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                 zestimate = list_price
                 zestimate_source = "List Price (no address)"
 
-            # Calculate flip deal if we have sqft
-            flip_results = []
+            # Check if we have a real Zestimate (not just list price fallback)
+            has_real_zestimate = zestimate_source == "Zillow API"
+            zestimate_display = f"${zestimate:,.0f}" if has_real_zestimate else f"List Price ${zestimate:,.0f}"
+
+            # Calculate simple 3-column output: Zestimate, Rehab Cost, Offer Amount
             if sqft > 0:
-                try:
-                    # Get address if available
-                    address = str(row[col_address]).strip() if col_address is not None and col_address < len(row) else "Property"
+                # Calculate rehab cost
+                rehab_cost = sqft * repair_cost_per_sqft
 
-                    # Create flip calculator input with custom parameters
-                    flip_input = FlipCalculatorInput(
-                        property_address=address,
-                        city=city or "",
-                        zip_code=zipcode or "00000",
-                        sqft_living=sqft,
-                        purchase_price=list_price,
-                        arv=list_price,
-                        repair_cost_per_sqft=repair_cost_per_sqft,
-                        hold_time_months=hold_time_months,
-                        interest_rate_annual=interest_rate,
-                        loan_points=loan_points,
-                        loan_to_cost_ratio=loan_to_cost,
-                        monthly_hoa_maintenance=monthly_hoa,
-                        monthly_insurance=monthly_insurance,
-                        monthly_utilities=monthly_utilities,
-                        property_tax_rate_annual=property_tax_rate,
-                        closing_costs_buy_percent=closing_buy_pct,
-                        closing_costs_sell_percent=closing_sell_pct,
-                        seller_credit_percent=seller_credit_pct,
-                        staging_marketing=staging_cost,
-                        listing_commission_rate=listing_commission,
-                        buyer_commission_rate=buyer_commission
-                    )
+                # Calculate offer amount using 70% rule: 0.7 * Zestimate - Rehab Cost
+                if zestimate and zestimate > 0:
+                    offer_amount = (0.7 * zestimate) - rehab_cost
+                    offer_amount = max(0, offer_amount)  # Don't go negative
 
-                    # Calculate flip deal
-                    flip_result = calculate_flip_deal(flip_input)
-                    print(f"DEBUG: Calculated flip for row {idx}, ROI: {flip_result.profit_analysis.roi_percent:.1f}%")
-
-                    # Calculate flip results (for internal use, not written to sheet)
-                    flip_results = [
-                        # Sqft info (2 columns)
-                        str(sqft),
-                        sqft_source,
-                        # Quick indicators (3 columns)
-                        "YES" if flip_result.profit_analysis.is_profitable else "NO",
-                        "YES" if flip_result.profit_analysis.meets_minimum_roi else "NO",
-                        "YES" if flip_result.profit_analysis.meets_70_percent_rule else "NO",
-                        # Key metrics (3 columns)
-                        f"{flip_result.profit_analysis.roi_percent:.1f}%",
-                        f"${flip_result.profit_analysis.gross_profit:,.0f}",
-                        f"{flip_result.profit_analysis.profit_margin_percent:.1f}%",
-                        # Core numbers (4 columns)
-                        f"${flip_result.acquisition.purchase_price:,.0f}",
-                        f"${flip_result.profit_analysis.total_all_costs:,.0f}",
-                        f"${flip_result.profit_analysis.cash_needed:,.0f}",
-                        f"${flip_result.max_offer_70_rule:,.0f}",
-                        # Cost summaries (4 columns)
-                        f"${flip_result.acquisition.total_acquisition:,.0f}",
-                        f"${flip_result.renovation.total_renovation:,.0f}",
-                        f"${flip_result.holding.total_holding:,.0f}",
-                        f"${flip_result.selling.total_selling:,.0f}",
+                    value_cols = [
+                        f"${zestimate:,.0f}",  # Zestimate
+                        f"${rehab_cost:,.0f}",  # Rehab Cost
+                        f"${offer_amount:,.0f}"  # Offer Amount (70% rule)
                     ]
-
-                    # Get Hybrid ARV (ML + Zillow)
-                    arv_needed = flip_result.recommended_arv_for_profit
-
-                    try:
-                        # Prepare property data for ML model
-                        property_data = {
-                            'Building Sqft': sqft,
-                            'Bedrooms': bedrooms if bedrooms else 3,
-                            'Total Bathrooms': bathrooms if bathrooms else 2,
-                            'Lot Size Sqft': 10000,  # Default lot size
-                            'Effective Year Built': 1990,  # Default year
-                            'Total Assessed Value': assessed_value if assessed_value else list_price * 0.8,
-                            'City': city if city else 'Unknown'
-                        }
-
-                        # Get hybrid ARV prediction
-                        hybrid_arv = get_hybrid_arv(property_data, zestimate)
-
-                        if hybrid_arv['arv_primary']:
-                            arv_primary = hybrid_arv['arv_primary']
-
-                            # Determine deal status by comparing primary ARV vs ARV Needed
-                            if arv_primary >= arv_needed * 1.05:  # 5% cushion
-                                deal_status = "GOOD DEAL"
-                            elif arv_primary >= arv_needed:
-                                deal_status = "MAYBE"
-                            else:
-                                deal_status = "NO DEAL"
-
-                            value_supports = "YES" if arv_primary >= arv_needed else "NO"
-
-                            # Calculate Maximum Allowable Offer (MAO) as 50% of primary ARV
-                            # But never higher than the list price
-                            mao = arv_primary * 0.50
-                            mao = min(mao, list_price)  # Cap at list price
-
-                            # Prepare AR V range string
-                            if hybrid_arv['arv_ml_lower'] and hybrid_arv['arv_ml_upper']:
-                                arv_range = f"${hybrid_arv['arv_ml_lower']:,.0f} - ${hybrid_arv['arv_ml_upper']:,.0f}"
-                            else:
-                                arv_range = "N/A"
-
-                            # 12 columns: Zestimate, ARV_ML, ARV_Range, ARV_Primary, ARV_Needed, Deal_Status, Confidence, Agreement, Market_Supports, Rehab, Total_Cost, MAO
-                            value_cols = [
-                                f"${zestimate:,.0f}" if zestimate else "N/A",  # Zestimate
-                                f"${hybrid_arv['arv_ml']:,.0f}" if hybrid_arv['arv_ml'] else "N/A",  # ARV ML
-                                arv_range,  # ARV Range (ML confidence interval)
-                                f"${arv_primary:,.0f}",  # ARV Primary (hybrid)
-                                f"${arv_needed:,.0f}",  # ARV Needed
-                                deal_status,  # Deal Status
-                                hybrid_arv['confidence'],  # Confidence
-                                hybrid_arv['agreement'],  # Agreement (ML vs Zillow)
-                                value_supports,  # Market Supports Deal
-                                f"${flip_result.renovation.total_renovation:,.0f}",  # Rehab Cost
-                                f"${flip_result.profit_analysis.total_all_costs:,.0f}",  # Total Cost
-                                f"${mao:,.0f}"  # Maximum Allowable Offer
-                            ]
-                        else:
-                            print(f"  No ARV prediction available")
-                            mao = arv_needed * 0.50
-                            mao = min(mao, list_price)  # Cap at list price
-                            value_cols = ["N/A", "N/A", "N/A", "N/A", f"${arv_needed:,.0f}", "UNKNOWN", "NO_DATA", "NO_DATA", "N/A", f"${flip_result.renovation.total_renovation:,.0f}", f"${flip_result.profit_analysis.total_all_costs:,.0f}", f"${mao:,.0f}"]
-                    except Exception as e:
-                        print(f"  Error calculating deal analysis: {e}")
-                        mao = arv_needed * 0.50 if arv_needed else 0
-                        mao = min(mao, list_price) if mao and list_price else mao  # Cap at list price
-                        value_cols = ["ERROR", "ERROR", "ERROR", "ERROR", f"${arv_needed:,.0f}" if arv_needed else "N/A", "ERROR", "ERROR", "ERROR", "N/A", "N/A", "N/A", f"${mao:,.0f}"]
-
-                except Exception as e:
-                    print(f"Error calculating flip for row {idx}: {e}")
-                    value_cols = ["ERROR", "", "", "", "", "", "", "", "", "", "", ""]
-                    flip_results = ["", "", "ERROR"] + [""] * 13
+                    print(f"  Row {idx}: Zestimate=${zestimate:,.0f}, Rehab=${rehab_cost:,.0f}, Offer=${offer_amount:,.0f}")
+                else:
+                    value_cols = ["N/A", f"${rehab_cost:,.0f}", "N/A"]
             else:
-                # Still no sqft after API call - cannot calculate flip
-                print(f"  No sqft available for row {idx} - skipping flip calculation")
-                zestimate_val = f"${zestimate:,.0f}" if zestimate else "N/A"
-                value_cols = [zestimate_val, "N/A", "N/A", "N/A", "N/A", "NO SQFT", "NO_DATA", "NO_DATA", "N/A", "N/A", "N/A", "N/A"]
-                flip_results = ["0", "Missing", "N/A - No Sqft"] + [""] * 13
+                # No sqft - cannot calculate rehab
+                value_cols = [f"${zestimate:,.0f}", "NO SQFT", "N/A"]
+                print(f"  No sqft available for row {idx}")
 
-            # Format output (12 columns: Zestimate, ARV_ML, ARV_Range, ARV_Primary, ARV_Needed, Deal_Status, Confidence, Agreement, Market_Supports, Rehab, Total_Cost, MAO)
+            # Format output (3 columns: Zestimate, Rehab_Cost, Offer_Amount)
             results_to_write.append(value_cols)
 
         except Exception as e:
             failed += 1
-            # Add empty columns for failed rows (12 columns)
-            results_to_write.append(["ERROR", str(e)[:30], "", "", "", "", "", "", "", "", "", ""])
+            # Add empty columns for failed rows (3 columns)
+            results_to_write.append(["ERROR", str(e)[:30], ""])
             print(f"Error processing row {idx}: {e}")
 
     # Write results back to sheet if requested
@@ -823,23 +722,20 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
     if request.write_back and results_to_write:
         try:
             print(f"DEBUG: Starting write operation to sheet...")
-            # Write to columns X through AI (12 columns)
+            # Write to columns X through Z (3 columns)
             # First, add/update header row
             header_row_num = request.start_row - 1
             if header_row_num >= 1:
                 headers = [
-                    # Hybrid ARV Analysis (X-AI) - 12 columns
-                    'Zestimate', 'ARV_ML', 'ARV_Range', 'ARV_Primary', 'ARV_Needed', 'Deal_Status',
-                    'Confidence', 'ML_Zillow_Agreement', 'Market_Supports_Deal',
-                    'Rehab_Cost', 'Total_Cost', 'Maximum_Allowable_Offer'
+                    'Zestimate', 'Rehab_Cost', 'Offer_Amount'
                 ]
                 print(f"DEBUG: Writing headers to row {header_row_num}")
-                worksheet.update(f'X{header_row_num}:AI{header_row_num}', [headers])
+                worksheet.update(f'X{header_row_num}:Z{header_row_num}', [headers])
 
             # Write prediction results
             start_cell = f'X{request.start_row}'
             end_row = request.start_row + len(results_to_write) - 1
-            end_cell = f'AI{end_row}'
+            end_cell = f'Z{end_row}'
 
             print(f"DEBUG: Writing {len(results_to_write)} rows from {start_cell} to {end_cell}")
             worksheet.update(f'{start_cell}:{end_cell}', results_to_write)

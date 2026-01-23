@@ -213,9 +213,9 @@
         <div class="info-box">
             <h3>📊 How It Works</h3>
             <p>
-                Enter your Google Sheets URL and adjust the flip calculator parameters below.
-                The system will analyze each property using these settings and write results back to columns X through AH
-                with deal quality indicators, market value comparisons, rehab costs, total costs, and comparable properties.
+                Enter your Google Sheets URL and set your repair cost per sqft.
+                The system will fetch Zestimates from Zillow and write 3 columns (X-Z):
+                <strong>Zestimate</strong>, <strong>Rehab Cost</strong>, and <strong>Offer Amount</strong> (70% rule: 0.7 × Zestimate - Rehab).
             </p>
         </div>
 
@@ -466,7 +466,7 @@
                 if (response.ok) {
                     showStatus(
                         `✅ Success! Analyzed ${result.successful_predictions} properties. ` +
-                        `Failed: ${result.failed_predictions}. Results written to columns X-AH.`,
+                        `Failed: ${result.failed_predictions}. Results written to columns X-Z (Zestimate, Rehab, Offer).`,
                         'success'
                     );
                 } else {

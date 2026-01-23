@@ -151,8 +151,9 @@ class ZillowAPIService:
         bathrooms: Optional[float] = None,
         square_footage: Optional[int] = None,
         zillow_url: str = None,
+        return_details: bool = False,
         **kwargs
-    ) -> Optional[float]:
+    ) -> Optional[float] | Optional[Dict]:
         """
         Get property value estimate (Zestimate) - compatible with RentCast interface
 
@@ -166,10 +167,12 @@ class ZillowAPIService:
             bathrooms: Number of bathrooms (not used by Zillow scraper)
             square_footage: Square footage (not used by Zillow scraper)
             zillow_url: Direct Zillow URL (with ZPID) - if provided, uses this instead of constructing
+            return_details: If True, returns dict with zestimate, sqft, beds, baths
             **kwargs: Additional parameters (for compatibility)
 
         Returns:
-            Zestimate value as float, or None if not available
+            If return_details=False: Zestimate value as float, or None
+            If return_details=True: Dict with zestimate, sqft, bedrooms, bathrooms
         """
         # If zillow_url is provided directly, use Property API with URL
         if zillow_url and zillow_url.strip():
@@ -182,44 +185,104 @@ class ZillowAPIService:
             print(f"  No property data returned from API")
             return None
 
-        # Extract Zestimate from response
+        # Extract Zestimate and property details from response
         try:
             print(f"  Attempting to extract Zestimate from response...")
 
-            # HasData API specific structure: data is nested under 'property' key
+            zestimate = None
+            sqft = None
+            beds = None
+            baths = None
+
+            # Determine property object from response
+            prop = None
+
+            # HasData API: single property result
             if 'property' in property_data and isinstance(property_data['property'], dict):
                 prop = property_data['property']
+            # HasData API: search results (array of properties)
+            elif 'properties' in property_data and len(property_data['properties']) > 0:
+                prop = property_data['properties'][0]
+                print(f"  Using first property from search results")
 
-                # First try to get Zestimate (preferred)
+            if prop:
+                # Extract Zestimate (preferred) or list price
                 if 'zestimate' in prop and prop['zestimate']:
-                    value = float(prop['zestimate'])
-                    print(f"  ✅ Found Zestimate in property: ${value:,.0f}")
-                    return value
+                    zestimate = float(prop['zestimate'])
+                    print(f"  SUCCESS: Found Zestimate: ${zestimate:,.0f}")
+                elif 'price' in prop and prop['price']:
+                    zestimate = float(prop['price'])
+                    print(f"  SUCCESS: Found list price (no Zestimate): ${zestimate:,.0f}")
 
-                # Fall back to list price if no Zestimate
-                if 'price' in prop and prop['price']:
-                    value = float(prop['price'])
-                    print(f"  ✅ Found list price in property (no Zestimate): ${value:,.0f}")
-                    return value
+                # Extract square footage (try multiple possible field names)
+                # Note: area=0 means no data, so we check for value > 0
+                for sqft_field in ['area', 'livingArea', 'livingAreaSqFt', 'sqft', 'livingAreaValue', 'finishedSqFt']:
+                    if sqft_field in prop and prop[sqft_field] and int(float(prop[sqft_field])) > 0:
+                        sqft = int(float(prop[sqft_field]))
+                        print(f"  SUCCESS: Found sqft ({sqft_field}): {sqft:,}")
+                        break
+
+                # Extract bedrooms
+                for bed_field in ['beds', 'bedrooms', 'bedroomCount']:
+                    if bed_field in prop and prop[bed_field]:
+                        beds = int(prop[bed_field])
+                        print(f"  SUCCESS: Found bedrooms: {beds}")
+                        break
+
+                # Extract bathrooms
+                for bath_field in ['baths', 'bathrooms', 'bathroomCount']:
+                    if bath_field in prop and prop[bath_field]:
+                        baths = float(prop[bath_field])
+                        print(f"  SUCCESS: Found bathrooms: {baths}")
+                        break
+
+                # If sqft is missing but we have a Zillow URL, make follow-up call to Property API
+                if sqft is None and 'url' in prop and prop['url'] and not zillow_url:
+                    print(f"  No sqft from Listing API, trying Property API...")
+                    prop_url = prop['url']
+                    full_data = self._make_request_by_url(prop_url)
+                    if full_data and 'property' in full_data:
+                        full_prop = full_data['property']
+                        # Get sqft from Property API
+                        for sqft_field in ['area', 'livingArea', 'livingAreaSqFt', 'sqft']:
+                            if sqft_field in full_prop and full_prop[sqft_field] and int(float(full_prop[sqft_field])) > 0:
+                                sqft = int(float(full_prop[sqft_field]))
+                                print(f"  SUCCESS: Found sqft from Property API ({sqft_field}): {sqft:,}")
+                                break
+                        # Also get Zestimate if we only had list price
+                        if 'zestimate' in full_prop and full_prop['zestimate']:
+                            zestimate = float(full_prop['zestimate'])
+                            print(f"  SUCCESS: Found Zestimate from Property API: ${zestimate:,.0f}")
 
             # Legacy fallback: try root level (for other APIs or response formats)
-            if 'zestimate' in property_data:
-                value = float(property_data['zestimate'])
-                print(f"  ✅ Found Zestimate in root: ${value:,.0f}")
-                return value
-            elif 'price' in property_data:
-                value = float(property_data['price'])
-                print(f"  ✅ Found price in root: ${value:,.0f}")
-                return value
+            if not zestimate:
+                if 'zestimate' in property_data:
+                    zestimate = float(property_data['zestimate'])
+                    print(f"  SUCCESS: Found Zestimate in root: ${zestimate:,.0f}")
+                elif 'price' in property_data:
+                    zestimate = float(property_data['price'])
+                    print(f"  SUCCESS: Found price in root: ${zestimate:,.0f}")
 
             # If nothing found
-            print(f"  ⚠️  WARNING: Could not find Zestimate or price in response")
-            print(f"  Response keys: {list(property_data.keys())[:10]}")
-            if 'property' in property_data:
-                print(f"  Property keys: {list(property_data['property'].keys())[:15]}")
+            if not zestimate:
+                print(f"  WARNING:  WARNING: Could not find Zestimate or price in response")
+                print(f"  Response keys: {list(property_data.keys())[:10]}")
+                if 'property' in property_data:
+                    print(f"  Property keys: {list(property_data['property'].keys())[:15]}")
+
+            # Return based on return_details flag
+            if return_details:
+                return {
+                    'zestimate': zestimate,
+                    'sqft': sqft,
+                    'bedrooms': beds,
+                    'bathrooms': baths
+                }
+            else:
+                return zestimate
 
         except (KeyError, ValueError, TypeError) as e:
-            print(f"  ❌ ERROR extracting Zestimate: {e}")
+            print(f"  ERROR: ERROR extracting Zestimate: {e}")
             return None
 
         return None
