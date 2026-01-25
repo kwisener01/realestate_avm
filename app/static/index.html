@@ -104,6 +104,44 @@
             border-color: #667eea;
         }
 
+        .deal-type-toggle {
+            display: flex;
+            gap: 15px;
+            margin-top: 5px;
+        }
+
+        .toggle-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            padding: 10px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            transition: all 0.2s;
+            font-weight: normal;
+        }
+
+        .toggle-option:hover {
+            border-color: #667eea;
+        }
+
+        .toggle-option input[type="radio"] {
+            width: 18px;
+            height: 18px;
+            accent-color: #667eea;
+        }
+
+        .toggle-option input[type="radio"]:checked + .toggle-label {
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .toggle-option:has(input[type="radio"]:checked) {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+
         .btn {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -213,9 +251,12 @@
         <div class="info-box">
             <h3>📊 How It Works</h3>
             <p>
-                Enter your Google Sheets URL and set your repair cost per sqft.
-                The system will fetch Zestimates from Zillow and write 3 columns (X-Z):
-                <strong>Zestimate</strong>, <strong>Rehab Cost</strong>, and <strong>Offer Amount</strong> (70% rule: 0.7 × Zestimate - Rehab).
+                Enter your Google Sheets URL, select deal type, and set your repair cost per sqft.
+                The system will fetch Zestimates from Zillow and calculate rehab costs and MAO.
+            </p>
+            <p style="margin-top: 8px;">
+                <strong>On-Market:</strong> MLS format - outputs to columns X-Z (Zestimate, Rehab, Offer)<br>
+                <strong>Off-Market:</strong> Full address in col A, SF in col G - outputs to columns N-P (Zestimate, Rehab, MAO)
             </p>
         </div>
 
@@ -238,6 +279,22 @@
                             <span class="label-hint">(First data row, typically 2)</span>
                         </label>
                         <input type="number" id="startRow" name="startRow" value="2" min="1" required>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            Deal Type
+                            <span class="label-hint">(Sheet format)</span>
+                        </label>
+                        <div class="deal-type-toggle">
+                            <label class="toggle-option">
+                                <input type="radio" name="dealType" value="on_market" checked>
+                                <span class="toggle-label">On-Market (MLS)</span>
+                            </label>
+                            <label class="toggle-option">
+                                <input type="radio" name="dealType" value="off_market">
+                                <span class="toggle-label">Off-Market</span>
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -424,10 +481,12 @@
             e.preventDefault();
 
             const formData = new FormData(e.target);
+            const dealType = formData.get('dealType') || 'on_market';
             const data = {
                 sheet_url: formData.get('sheetUrl'),
                 start_row: parseInt(formData.get('startRow')),
                 write_back: true,
+                deal_type: dealType,
                 parameters: {
                     repair_cost_per_sqft: parseFloat(formData.get('repairCostPerSqft')),
                     hold_time_months: parseInt(formData.get('holdTimeMonths')),
@@ -464,9 +523,11 @@
                 const result = await response.json();
 
                 if (response.ok) {
+                    const outputCols = dealType === 'off_market' ? 'N-P' : 'X-Z';
+                    const outputNames = dealType === 'off_market' ? 'Zestimate, Rehab, MAO' : 'Zestimate, Rehab, Offer';
                     showStatus(
                         `✅ Success! Analyzed ${result.successful_predictions} properties. ` +
-                        `Failed: ${result.failed_predictions}. Results written to columns X-Z (Zestimate, Rehab, Offer).`,
+                        `Failed: ${result.failed_predictions}. Results written to columns ${outputCols} (${outputNames}).`,
                         'success'
                     );
                 } else {

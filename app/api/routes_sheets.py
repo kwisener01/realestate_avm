@@ -222,7 +222,17 @@ def check_sheet_permissions(client, sheet_id: str) -> dict:
         spreadsheet = client.open_by_key(sheet_id)
 
         # Attempt to read sheet properties (requires at least view access)
-        properties = spreadsheet.fetch_sheet_metadata()
+        try:
+            properties = spreadsheet.fetch_sheet_metadata()
+        except gspread.exceptions.APIError as e:
+            # Check if this is an Excel file that needs conversion
+            if 'This operation is not supported for this document' in str(e):
+                return {
+                    'can_edit': False,
+                    'message': 'This appears to be an Excel file. Please convert it to Google Sheets format: Open the file in Google Drive, then File > Save as Google Sheets.'
+                }
+            # Re-raise if it's a different error
+            raise
 
         # Try a test write operation to verify edit permissions
         # We'll update the spreadsheet properties with the same title (no actual change)
@@ -256,6 +266,12 @@ def check_sheet_permissions(client, sheet_id: str) -> dict:
             'message': f'Spreadsheet not found or not shared with service account'
         }
     except Exception as e:
+        # Check if this is the Excel file error
+        if 'This operation is not supported for this document' in str(e):
+            return {
+                'can_edit': False,
+                'message': 'This appears to be an Excel file. Please convert it to Google Sheets format: Open the file in Google Drive, then File > Save as Google Sheets.'
+            }
         return {
             'can_edit': False,
             'message': f'Error checking permissions: {str(e)}'
@@ -357,64 +373,59 @@ def clean_zip(val):
 @router.post("/predict", response_model=GoogleSheetsResponse, status_code=status.HTTP_200_OK)
 async def predict_from_sheets(request: GoogleSheetsRequest):
     """
-    Process MLS listings from Google Sheets with Area-Specific ARV Analysis.
+    Process property listings from Google Sheets with ARV Analysis.
 
-    ## Expected Sheet Format (MLS Data)
+    ## Deal Types
+
+    Supports two deal types controlled by the `deal_type` parameter:
+
+    ### On-Market (MLS Data) - `deal_type: "on_market"`
+    Standard MLS format with City, Zip, List Price columns.
+    - If no Zestimate → defaults to List Price
+    - If square footage provided → calculates Rehab Cost
+    - Calculates Maximum Allowable Offer (MAO)
+    Outputs to columns X-Z: Zestimate, Rehab_Cost, Offer_Amount
+
+    ### Off-Market - `deal_type: "off_market"`
+    Simplified format with full address in column A and square footage in column G.
+    - If no Zestimate → writes "No Zestimate" and skips property
+    - If Zestimate exists:
+      - If square footage provided → uses it for Rehab Cost
+      - If no square footage → fetches from Zillow API for Rehab Cost
+    - Calculates Maximum Allowable Offer (MAO)
+    Outputs to columns N-P (skipping M): Zestimate, Rehab_Cost, MAO
+
+    ## Off-Market Sheet Format
+
+    Expected columns:
+    - **A: Address** - Full address (e.g., "123 Main St, Atlanta, GA, USA")
+    - **B: State** - State abbreviation
+    - **C: MSA** - Metro area
+    - **D: Year Built**
+    - **E: Bed** - Bedrooms
+    - **F: Bath** - Bathrooms
+    - **G: SF** - Square footage
+    - **H: Occ or Vacant**
+    - **I-K: Lease info**
+    - **L: Price** - Asking price
+
+    ## On-Market Sheet Format (MLS Data)
 
     Required columns (names are flexible):
     - **City** - Property city
     - **Zip** - 5-digit zip code
     - **List Price** (or Price, MLS Amount) - Listing price
-    - **Days On Market** (or DOM) - Days listed
-
-    Optional columns (will be included in analysis but not required):
-    - **Zillow URL** (or Zillow Link, URL, Property URL) - Direct Zillow property URL with ZPID (recommended for accurate Zestimate)
-    - Street Number, Street Name, Address
-    - Parcel Number, County Code, MLS #
-    - Owner info, Agent info, etc.
 
     ## Output Columns
 
-    Writes 8 columns to the sheet (columns X through AE):
+    **On-Market**: Writes 3 columns (X-Z): Zestimate, Rehab_Cost, Offer_Amount
+    **Off-Market**: Writes 3 columns (N-P): Zestimate, Rehab_Cost, MAO
 
-    **Zestimate & ARV Analysis:**
-    - **X: Zestimate** - Zillow property valuation (from API if URL provided, otherwise defaults to list price)
-    - **Y: ARV (80%)** - After Repair Value = Zestimate × 0.80
-    - **Z: ARV Needed** - ARV needed for 20% ROI from flip calculator
-    - **AA: Deal Status** - GOOD DEAL, MAYBE, or NO DEAL (based on ARV 80% vs ARV Needed)
-    - **AB: Market Supports Deal** - YES/NO if ARV (80%) supports the deal
-    - **AC: Rehab Cost** - Total renovation costs from flip calculator
-    - **AD: Total Cost** - Total all-in costs (purchase + renovation + holding + selling)
-    - **AE: Maximum Allowable Offer** - 50% of ARV (80%) [MAO = ARV × 0.50]
+    ## MAO Calculation
 
-    **Note on Flip Calculator:**
-    Flip calculator parameters (repair costs, hold time, financing terms, etc.) are customizable
-    via the web UI. The flip calculator runs internally for each property to calculate ARV Needed,
-    but detailed flip metrics are not written to the sheet to keep output focused on market value
-    analysis and deal quality indicators.
-
-    ## Deal Quality Determination
-
-    Deal quality is determined by comparing ARV (80% of Zestimate) against the calculated ARV Needed:
-
-    - **GOOD DEAL**: ARV (80%) ≥ ARV Needed × 1.05 (5% cushion for profit)
-    - **MAYBE**: ARV (80%) ≥ ARV Needed (breakeven or minimal profit)
-    - **NO DEAL**: ARV (80%) < ARV Needed (insufficient value to support flip)
-
-    ## Maximum Allowable Offer (MAO)
-
-    MAO is calculated as 50% of the ARV (80% of Zestimate), providing a conservative entry point:
-    - Formula: MAO = min(ARV (80%) × 0.50, List Price)
-    - Base calculation: Zestimate × 0.80 × 0.50 = Zestimate × 0.40
-    - **Important**: MAO is capped at the list price - never offer more than asking
+    MAO (Maximum Allowable Offer) uses the 70% rule:
+    - Formula: MAO = (0.70 × Zestimate) - Rehab_Cost
     - This ensures sufficient margin for repairs, holding costs, and profit
-    - Adjust offer based on property condition and market dynamics
-
-    ## Square Footage Handling
-
-    - **Sheet Data**: Uses Building Sqft column when available
-    - **Zillow Fallback**: Automatically fetches sqft from Zillow API if missing
-    - **Source Tracking**: Sqft_Source column shows data origin (Sheet or Zillow)
 
     ## Authentication
 
@@ -477,6 +488,162 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     return header_lower.index(name_lower)
             return None
 
+        # Check deal type and route to appropriate processing
+        deal_type = request.deal_type.lower() if request.deal_type else "on_market"
+        print(f"DEBUG: Processing deal_type = {deal_type}")
+
+        # Get data rows (skip header)
+        data_rows = all_values[request.start_row - 1:]
+
+        # ============ OFF-MARKET PROCESSING ============
+        if deal_type == "off_market":
+            print(f"DEBUG: Using OFF-MARKET processing for {len(data_rows)} rows")
+            # Off-market format: Address in A, SF in G, Price in L
+            # Output to N, O, P (skip M): Zestimate, Rehab_Cost, MAO
+
+            # Initialize Zillow API service
+            zillow = ZillowAPIService()
+
+            # Extract repair cost parameter
+            params = request.parameters
+            repair_cost_per_sqft = params.repair_cost_per_sqft if params and params.repair_cost_per_sqft is not None else 45
+
+            successful = 0
+            failed = 0
+            results_to_write = []
+
+            for idx, row in enumerate(data_rows, start=request.start_row):
+                try:
+                    # Off-market columns (0-indexed):
+                    # A=0: Address, B=1: State, C=2: MSA, D=3: Year Built,
+                    # E=4: Bed, F=5: Bath, G=6: SF, H=7: Occ/Vacant,
+                    # I=8: Lease Start, J=9: Lease End, K=10: Leased Rent, L=11: Price
+                    full_address = str(row[0]).strip() if len(row) > 0 and row[0] else None
+                    state = str(row[1]).strip() if len(row) > 1 and row[1] else "GA"
+                    bedrooms = safe_int(row[4], None) if len(row) > 4 else None
+                    bathrooms = None
+                    if len(row) > 5 and row[5]:
+                        try:
+                            bathrooms = float(str(row[5]).strip().replace(',', ''))
+                        except:
+                            bathrooms = None
+                    sqft = safe_int(row[6], 0) if len(row) > 6 else 0
+                    list_price = clean_price(row[11]) if len(row) > 11 else None
+
+                    # Skip if no address
+                    if not full_address:
+                        failed += 1
+                        results_to_write.append(["ERROR - No Address", "", ""])
+                        continue
+
+                    # Parse city and zip from full address (format: "123 St, City, ST, USA")
+                    address_parts = full_address.split(',')
+                    city = address_parts[1].strip() if len(address_parts) > 1 else None
+                    zipcode = None
+                    # Try to extract zip from address
+                    zip_match = re.search(r'(\d{5})', full_address)
+                    if zip_match:
+                        zipcode = zip_match.group(1)
+
+                    print(f"  Row {idx}: Processing {full_address[:50]}...")
+
+                    # Fetch Zestimate from Zillow using full address
+                    zestimate = None
+                    try:
+                        api_result = zillow.get_value_estimate(
+                            full_address, city, state, zipcode,
+                            square_footage=sqft if sqft > 0 else None,
+                            bedrooms=bedrooms,
+                            bathrooms=bathrooms,
+                            return_details=True
+                        )
+
+                        if api_result and isinstance(api_result, dict):
+                            zestimate = api_result.get('zestimate')
+                            # For OFF-MARKET: If no sqft provided, get it from API
+                            if sqft == 0 and api_result.get('sqft'):
+                                sqft = api_result['sqft']
+                                print(f"    Got sqft from API: {sqft:,}")
+
+                        if zestimate and zestimate > 0:
+                            print(f"    SUCCESS: Zestimate = ${zestimate:,.0f}")
+                        else:
+                            # OFF-MARKET: No Zestimate means skip this property
+                            print(f"    No Zestimate found - SKIPPING property")
+                            results_to_write.append(["No Zestimate", "", ""])
+                            continue
+
+                    except Exception as e:
+                        # OFF-MARKET: API error means no Zestimate, skip property
+                        print(f"    API error: {e} - SKIPPING property")
+                        results_to_write.append(["No Zestimate", "", ""])
+                        continue
+
+                    # OFF-MARKET: We have a Zestimate, now calculate rehab cost and MAO
+                    # If sqft still not available after API call, we cannot proceed
+                    if sqft == 0:
+                        print(f"    No square footage available - SKIPPING property")
+                        results_to_write.append([f"${zestimate:,.0f}", "No Square Footage", ""])
+                        continue
+
+                    # Calculate rehab cost and MAO
+                    rehab_cost = sqft * repair_cost_per_sqft
+                    mao = (0.7 * zestimate) - rehab_cost
+                    mao = max(0, mao)
+
+                    value_cols = [
+                        f"${zestimate:,.0f}",
+                        f"${rehab_cost:,.0f}",
+                        f"${mao:,.0f}"
+                    ]
+                    print(f"    Zestimate=${zestimate:,.0f}, Rehab=${rehab_cost:,.0f}, MAO=${mao:,.0f}")
+
+                    results_to_write.append(value_cols)
+                    successful += 1
+
+                except Exception as e:
+                    failed += 1
+                    results_to_write.append(["ERROR", str(e)[:30], ""])
+                    print(f"Error processing row {idx}: {e}")
+
+            # Write results to columns N-P (skipping M)
+            written_back = False
+            if request.write_back and results_to_write:
+                try:
+                    # Write headers
+                    header_row_num = request.start_row - 1
+                    if header_row_num >= 1:
+                        headers = ['Zestimate', 'Rehab_Cost', 'MAO']
+                        worksheet.update(f'N{header_row_num}:P{header_row_num}', [headers])
+
+                    # Write data to N-P
+                    start_cell = f'N{request.start_row}'
+                    end_row = request.start_row + len(results_to_write) - 1
+                    end_cell = f'P{end_row}'
+
+                    print(f"DEBUG: Writing {len(results_to_write)} rows from {start_cell} to {end_cell}")
+                    worksheet.update(f'{start_cell}:{end_cell}', results_to_write)
+                    written_back = True
+                    print(f"DEBUG: Write operation completed successfully!")
+
+                except Exception as e:
+                    print(f"Failed to write results back to sheet: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            return GoogleSheetsResponse(
+                sheet_id=sheet_id,
+                total_properties=len(data_rows),
+                successful_predictions=successful,
+                failed_predictions=failed,
+                predictions=[],
+                written_back=written_back,
+                timestamp=datetime.now()
+            )
+
+        # ============ ON-MARKET PROCESSING (existing logic) ============
+        print(f"DEBUG: Using ON-MARKET processing for {len(data_rows)} rows")
+
         col_city = find_column(header_row, ['city'])
         col_zip = find_column(header_row, ['zip', 'zipcode', 'zip code'])
         col_list_price = find_column(header_row, ['list price', 'price', 'mls amount', 'sale price'])
@@ -507,9 +674,6 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Missing required columns: {', '.join(missing_cols)}. Found: {', '.join(header_row[:10])}"
             )
-
-        # Get data rows (skip header)
-        data_rows = all_values[request.start_row - 1:]
 
     except HTTPException:
         raise
@@ -627,7 +791,8 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
 
             zillow_url_from_sheet = str(row[col_zillow_url]).strip() if col_zillow_url is not None and col_zillow_url < len(row) and row[col_zillow_url] else None
 
-            # Fetch Zestimate and property details from Zillow (use URL with ZPID if available)
+            # ON-MARKET: Fetch Zestimate and property details from Zillow
+            # If no Zestimate available, default to list price
             zestimate = None
             zestimate_source = "API"  # Track where Zestimate came from
 
@@ -651,7 +816,7 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                     if api_result and isinstance(api_result, dict):
                         zestimate = api_result.get('zestimate')
 
-                        # Use API sqft if sheet doesn't have it
+                        # ON-MARKET: Use API sqft if sheet doesn't have it
                         if sqft == 0 and api_result.get('sqft'):
                             sqft = api_result['sqft']
                             sqft_source = "Zillow API"
@@ -661,19 +826,23 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
                         print(f"  SUCCESS: Retrieved Zestimate from API: ${zestimate:,.0f}")
                         zestimate_source = "Zillow API"
                     else:
+                        # ON-MARKET: No Zestimate means use list price as default
                         print(f"  API returned no Zestimate, defaulting to list price: ${list_price:,.0f}")
                         zestimate = list_price
                         zestimate_source = "List Price (fallback)"
 
                 except requests.exceptions.Timeout:
+                    # ON-MARKET: Timeout means use list price
                     print(f"  API timeout, defaulting to list price: ${list_price:,.0f}")
                     zestimate = list_price
                     zestimate_source = "List Price (timeout)"
                 except Exception as e:
+                    # ON-MARKET: Error means use list price
                     print(f"  API error ({type(e).__name__}), defaulting to list price: ${list_price:,.0f}")
                     zestimate = list_price
                     zestimate_source = "List Price (error)"
             else:
+                # ON-MARKET: No address means use list price
                 print(f"  No address or URL available, using list price: ${list_price:,.0f}")
                 zestimate = list_price
                 zestimate_source = "List Price (no address)"
@@ -682,26 +851,27 @@ async def predict_from_sheets(request: GoogleSheetsRequest):
             has_real_zestimate = zestimate_source == "Zillow API"
             zestimate_display = f"${zestimate:,.0f}" if has_real_zestimate else f"List Price ${zestimate:,.0f}"
 
-            # Calculate simple 3-column output: Zestimate, Rehab Cost, Offer Amount
+            # ON-MARKET: Calculate 3-column output: Zestimate, Rehab Cost, Offer Amount
+            # Only calculate rehab cost if square footage is provided in sheet
             if sqft > 0:
                 # Calculate rehab cost
                 rehab_cost = sqft * repair_cost_per_sqft
 
-                # Calculate offer amount using 70% rule: 0.7 * Zestimate - Rehab Cost
+                # Calculate offer amount (Maximum Allowable Offer) using 70% rule
                 if zestimate and zestimate > 0:
                     offer_amount = (0.7 * zestimate) - rehab_cost
                     offer_amount = max(0, offer_amount)  # Don't go negative
 
                     value_cols = [
-                        f"${zestimate:,.0f}",  # Zestimate
+                        f"${zestimate:,.0f}",  # Zestimate (or List Price if no Zestimate)
                         f"${rehab_cost:,.0f}",  # Rehab Cost
-                        f"${offer_amount:,.0f}"  # Offer Amount (70% rule)
+                        f"${offer_amount:,.0f}"  # Maximum Allowable Offer (70% rule)
                     ]
                     print(f"  Row {idx}: Zestimate=${zestimate:,.0f}, Rehab=${rehab_cost:,.0f}, Offer=${offer_amount:,.0f}")
                 else:
                     value_cols = ["N/A", f"${rehab_cost:,.0f}", "N/A"]
             else:
-                # No sqft - cannot calculate rehab
+                # ON-MARKET: No sqft provided - cannot calculate rehab cost
                 value_cols = [f"${zestimate:,.0f}", "NO SQFT", "N/A"]
                 print(f"  No sqft available for row {idx}")
 

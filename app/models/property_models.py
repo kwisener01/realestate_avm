@@ -212,6 +212,7 @@ class GoogleSheetsRequest(BaseModel):
     use_ensemble: bool = Field(True, description="Use ensemble model for predictions")
     credentials_path: Optional[str] = Field(None, description="Path to Google service account credentials JSON")
     parameters: Optional[FlipCalculatorParameters] = Field(None, description="Custom flip calculator parameters")
+    deal_type: str = Field("on_market", description="Deal type: 'on_market' (MLS format) or 'off_market' (simplified format)")
 
     class Config:
         schema_extra = {
